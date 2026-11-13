@@ -1,3 +1,5 @@
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
+#include "soh/Zmp/Test/Mutants.h"   // ZMP
 /*
  * File: z_player.c
  * Overlay: ovl_player_actor
@@ -1718,7 +1720,7 @@ void func_80832630(PlayState* play) {
 }
 
 void Player_RequestRumble(Player* this, s32 sourceStrength, s32 duration, s32 decreaseRate, s32 distSq) {
-    if (this->actor.category == ACTORCAT_PLAYER) {
+    if ((this->actor.category == ACTORCAT_PLAYER) && Zmp_IsLocalAudioPlayer(this)) { // ZMP: the local controller only
         Rumble_Request(distSq, sourceStrength, duration, decreaseRate);
     }
 }
@@ -3532,11 +3534,18 @@ void func_80836448(PlayState* play, Player* this, LinkAnimationHeader* anim) {
     func_80832224(this);
     Player_PlayVoiceSfx(this, NA_SE_VO_LI_DOWN);
 
+    // ZMP: in multiplayer a player with no fairy and a partner still standing is only downed (a partner can revive
+    // it); the game over is for when everybody is down (PLAN.md 2.8)
+    if (this->actor.category == ACTORCAT_PLAYER && Zmp_OnPlayerDeath(play, this)) {
+        return;
+    }
+
     if (this->actor.category == ACTORCAT_PLAYER) {
         Audio_SetBgmVolumeOffDuringFanfare();
 
         if (Inventory_ConsumeFairy(play)) {
             play->gameOverCtx.state = GAMEOVER_REVIVE_START;
+            Zmp_OnFairyRevive(play, this); // ZMP: the revive's darkening and bars are this player's screen's
             this->av1.actionVar1 = 1;
         } else {
             play->gameOverCtx.state = GAMEOVER_DEATH_START;
@@ -3546,9 +3555,33 @@ void func_80836448(PlayState* play, Player* this, LinkAnimationHeader* anim) {
             gSaveContext.natureAmbienceId = NATURE_ID_DISABLED;
         }
 
-        OnePointCutscene_Init(play, 9806, cond ? 120 : 60, &this->actor, CAM_ID_MAIN);
-        Letterbox_SetSizeTarget(32);
+        if (Zmp_AllowDeathCamera()) { // ZMP: a personal death camera must not take the other players' view
+            OnePointCutscene_Init(play, 9806, cond ? 120 : 60, &this->actor, CAM_ID_MAIN);
+            Letterbox_SetSizeTarget(32);
+        }
     }
+}
+
+// ZMP: a partner revived this downed player (soh/soh/Zmp/Sim/Players.cpp). The caller put the revive health in the
+// health accumulator; the player gets up like after a fairy revive once the hearts are refilled.
+void Player_ZmpRevive(PlayState* play, Player* this) {
+    if (this->stateFlags1 & PLAYER_STATE1_IN_WATER) {
+        LinkAnimation_Change(play, &this->skelAnime, &gPlayerAnim_link_swimer_swim_wait, 1.0f, 0.0f,
+                             Animation_GetLastFrame(&gPlayerAnim_link_swimer_swim_wait), ANIMMODE_ONCE, -16.0f);
+    } else {
+        LinkAnimation_Change(play, &this->skelAnime, &gPlayerAnim_link_derth_rebirth, 1.0f, 99.0f,
+                             Animation_GetLastFrame(&gPlayerAnim_link_derth_rebirth), ANIMMODE_ONCE, 0.0f);
+    }
+    this->av1.actionVar1 = 0;
+    this->av2.actionVar2 = -1; // func_80843AE8: stand up when the health accumulator is empty
+    Player_PlaySfx(this, NA_SE_EV_FIATY_HEAL - SFX_FLAG);
+}
+// ZMP: this Link goes away (its player left the group or the scene, soh/soh/Zmp/Sim/Players.cpp): it lets go of
+// whatever it holds, as when it is hit while carrying (finding AJ, reports/fase6/FAMILIAS.md family 2). Before,
+// Ruto (or a bomb, a pot) kept a pointer to a Link that no longer existed.
+void Player_ZmpLetGo(PlayState* play, Player* this) {
+    Player_DestroyHookshot(this);
+    func_80832564(play, this);
 }
 
 int Player_CanUpdateItems(Player* this) {
@@ -4766,6 +4799,7 @@ s32 func_808382DC(Player* this, PlayState* play) {
             Player_PlayVoiceSfx(this, NA_SE_VO_LI_TAKEN_AWAY);
             play->haltAllActors = true;
             Sfx_PlaySfxCentered(NA_SE_OC_ABYSS);
+            Zmp_NoteTransitionBy(this); // ZMP: only this player respawns (phase 5)
         } else if ((this->knockbackType != PLAYER_KNOCKBACK_NONE) &&
                    ((this->knockbackType >= PLAYER_KNOCKBACK_LARGE) || (this->invincibilityTimer == 0))) {
             u8 knockbackResponse[] = {
@@ -5122,6 +5156,13 @@ s32 Player_HandleExitsAndVoids(PlayState* play, Player* this, CollisionPoly* pol
 
             sp34 = this->unk_A84 - (s32)this->actor.world.pos.y;
 
+            if ((exitIndex != 0) && Zmp_ExitsLocked()) { // ZMP: tests, the exit acts as a wall ("zmp_lock_exits")
+                this->actor.world.pos = this->actor.prevPos;
+                this->linearVelocity = 0.0f;
+                this->actor.speedXZ = 0.0f;
+                return 0;
+            }
+
             if (!(this->stateFlags1 & (PLAYER_STATE1_ON_HORSE | PLAYER_STATE1_IN_WATER | PLAYER_STATE1_IN_CUTSCENE)) &&
                 !(this->actor.bgCheckFlags & BGCHECKFLAG_GROUND) && (sp34 < 100) && (sYDistToFloor > 100.0f)) {
                 return 0;
@@ -5132,6 +5173,7 @@ s32 Player_HandleExitsAndVoids(PlayState* play, Player* this, CollisionPoly* pol
                     Play_TriggerVoidOut(play);
                 }
                 Scene_SetTransitionForNextEntrance(play);
+                Zmp_NoteTransitionBy(this); // ZMP: only this player respawns (phase 5)
             } else {
                 play->nextEntranceIndex = play->setupExitList[exitIndex - 1];
 
@@ -5173,6 +5215,7 @@ s32 Player_HandleExitsAndVoids(PlayState* play, Player* this, CollisionPoly* pol
                     Scene_SetTransitionForNextEntrance(play);
                 }
                 play->transitionTrigger = TRANS_TRIGGER_START;
+                Zmp_NoteTransitionBy(this); // ZMP: this player walked out (phase 5: only it leaves the scene)
             }
 
             if (!(this->stateFlags1 & (PLAYER_STATE1_ON_HORSE | PLAYER_STATE1_IN_CUTSCENE)) &&
@@ -5182,7 +5225,9 @@ s32 Player_HandleExitsAndVoids(PlayState* play, Player* this, CollisionPoly* pol
 
                 if (temp == 11) {
                     Sfx_PlaySfxCentered2(NA_SE_OC_SECRET_HOLE_OUT);
-                    func_800F6964(5);
+                    if (Zmp_IsLocalAudioPlayer(this)) { // ZMP: the music fades only for the player who leaves
+                        func_800F6964(5);
+                    }
                     gSaveContext.seqId = (u8)NA_BGM_DISABLED;
                     gSaveContext.natureAmbienceId = NATURE_ID_DISABLED;
                 } else {
@@ -5232,6 +5277,7 @@ s32 Player_HandleExitsAndVoids(PlayState* play, Player* this, CollisionPoly* pol
                         } else if (GameInteractor_Should(VB_TRIGGER_VOIDOUT, true, this)) {
                             Play_TriggerVoidOut(play);
                         }
+                        Zmp_NoteTransitionBy(this); // ZMP: only this player respawns (phase 5)
                         play->transitionType = TRANS_TYPE_FADE_BLACK_FAST;
                         Sfx_PlaySfxCentered(NA_SE_OC_ABYSS);
                     } else {
@@ -5343,6 +5389,14 @@ s32 Player_ActionHandler_1(Player* this, PlayState* play) {
 
             if (this->doorType == PLAYER_DOORTYPE_SLIDING) {
                 doorShutter = (DoorShutter*)doorActor;
+
+                // ZMP: a boss door opens only with every player of the group at it; while somebody is missing it
+                // stays shut and the message box says who (D-117). (Not when the player walks out of a door it
+                // arrived by: that is the door's other side.)
+                if ((Player_Action_8084F9A0 != this->actionFunc) &&
+                    !Zmp_BossDoorMayOpen(play, this, doorActor, doorDirection)) {
+                    return 1;
+                }
 
                 this->yaw = doorShutter->dyna.actor.home.rot.y;
                 if (doorDirection > 0) {
@@ -6219,6 +6273,7 @@ s32 Player_ActionHandler_Talk(Player* this, PlayState* play) {
                     // text will be used. This is especially important to prevent unwanted behavior with regards to mask
                     // trading.
                     this->currentMask = sSavedCurrentMask;
+                    Zmp_TalkTextIdFor(this, talkOfferActor); // ZMP (D-223): the text computed for this player
                     if (GameInteractor_Should(VB_SKIP_TALKING, true)) {
                         Player_StartTalking(play, talkOfferActor);
                     }
@@ -7153,7 +7208,36 @@ static struct_80854578 D_80854578[] = {
     { &gPlayerAnim_link_uma_right_up, -34.16f, 7.91f },
 };
 
+static void Player_MountRideActor(Player* this, PlayState* play); // ZMP (test builds: zmp_stage mount)
+
 s32 Player_ActionHandler_3(Player* this, PlayState* play) {
+    EnHorse* rideActor = (EnHorse*)this->rideActor;
+
+    if ((rideActor != NULL) && CHECK_BTN_ALL(sControlInput->press.button, BTN_A)) {
+        Player_MountRideActor(this, play); // ZMP: the body below, shared with Player_ZmpMount
+        return 1;
+    }
+
+    return 0;
+}
+
+// ZMP (salas 2026-10-18): the harness's "zmp_stage mount <slot>" mounts `horse` as A beside it does, from the side
+// the Link stands on (the horse's own side check, EnHorse_MountSideCheck, only offers itself to "the player").
+s32 Player_ZmpMount(PlayState* play, Player* this, Actor* horse) {
+    f32 lx = (this->actor.world.pos.x - horse->world.pos.x) * Math_CosS(horse->shape.rot.y) -
+             (this->actor.world.pos.z - horse->world.pos.z) * Math_SinS(horse->shape.rot.y);
+
+    if (this->rideActor != NULL && this->rideActor != horse) {
+        return 0;
+    }
+    if (!Actor_SetRideActor(play, horse, lx > 0.0f ? -1 : 1)) {
+        return 0;
+    }
+    Player_MountRideActor(this, play);
+    return 1;
+}
+
+static void Player_MountRideActor(Player* this, PlayState* play) {
     EnHorse* rideActor = (EnHorse*)this->rideActor;
     f32 unk_04;
     f32 unk_08;
@@ -7161,7 +7245,7 @@ s32 Player_ActionHandler_3(Player* this, PlayState* play) {
     f32 sp34;
     s32 temp;
 
-    if ((rideActor != NULL) && CHECK_BTN_ALL(sControlInput->press.button, BTN_A)) {
+    {
         sp38 = Math_CosS(rideActor->actor.shape.rot.y);
         sp34 = Math_SinS(rideActor->actor.shape.rot.y);
 
@@ -7192,10 +7276,7 @@ s32 Player_ActionHandler_3(Player* this, PlayState* play) {
         this->actor.parent = this->rideActor;
         func_80832224(this);
         Actor_DisableLens(play);
-        return 1;
     }
-
-    return 0;
 }
 
 void Player_GetSlopeDirection(CollisionPoly* floorPoly, Vec3f* slopeNormal, s16* downwardSlopeYaw) {
@@ -9500,7 +9581,9 @@ void func_80843AE8(PlayState* play, Player* this) {
         this->av2.actionVar2 = 60;
         Player_SpawnFairy(play, this, &this->actor.world.pos, &D_808545E4, FAIRY_REVIVE_DEATH);
         Player_PlaySfx(this, NA_SE_EV_FIATY_HEAL - SFX_FLAG);
-        OnePointCutscene_Init(play, 9908, 125, &this->actor, CAM_ID_MAIN);
+        if (Zmp_AllowDeathCamera()) { // ZMP: the fairy camera is personal
+            OnePointCutscene_Init(play, 9908, 125, &this->actor, CAM_ID_MAIN);
+        }
     } else if (play->gameOverCtx.state == GAMEOVER_DEATH_WAIT_GROUND) {
         play->gameOverCtx.state = GAMEOVER_DEATH_DELAY_MENU;
     }
@@ -10406,6 +10489,12 @@ void Player_Action_80846050(Player* this, PlayState* play) {
     if (LinkAnimation_OnFrame(&this->skelAnime, 4.0f)) {
         Actor* interactRangeActor = this->interactRangeActor;
 
+        // ZMP (finding AK): a lift is offered to every player in reach; if another Link already took it (both
+        // pressed A in the same tick), this one lets go as if there were nothing to lift.
+        if ((interactRangeActor != NULL) && (interactRangeActor->parent != NULL) &&
+            (interactRangeActor->parent != &this->actor)) {
+            interactRangeActor = NULL;
+        }
         if (!func_80835644(play, this, interactRangeActor)) {
             this->heldActor = interactRangeActor;
             this->actor.child = interactRangeActor;
@@ -10793,6 +10882,8 @@ void Player_Init(Actor* thisx, PlayState* play2) {
     s32 respawnFlag;
     s32 respawnMode;
 
+    Zmp_OnPlayerInit(this, play); // ZMP: registers the Player of the slot being spawned
+
     play->shootingGalleryStatus = play->bombchuBowlingStatus = 0;
 
     play->playerInit = Player_InitCommon;
@@ -10886,7 +10977,13 @@ void Player_Init(Actor* thisx, PlayState* play2) {
 
     if (startMode != PLAYER_START_MODE_NOTHING) {
         if ((gSaveContext.gameMode == GAMEMODE_NORMAL) || (gSaveContext.gameMode == GAMEMODE_END_CREDITS)) {
-            this->naviActor = Player_SpawnFairy(play, this, &thisx->world.pos, &D_80854778, FAIRY_NAVI);
+            // ZMP (D-235, 2026-11-07): one Navi in the whole game, the host's (slot 0). The other Links have
+            // none: their naviActor stays NULL and every use of it checks that. (Mutant "navi_de_todos": one each.)
+            if (!Zmp_MultiActive() || Zmp_SlotOfPlayer(this) <= 0 || Zmp_TestMutant("navi_de_todos")) {
+                this->naviActor = Player_SpawnFairy(play, this, &thisx->world.pos, &D_80854778, FAIRY_NAVI);
+            } else {
+                this->naviActor = NULL;
+            }
             if (gSaveContext.dogParams != 0) {
                 gSaveContext.dogParams |= 0x8000;
             }
@@ -11088,17 +11185,21 @@ void Player_UpdateInterface(PlayState* play, Player* this) {
             }
         }
 
-        Interface_SetDoAction(play, doAction);
+        Zmp_SimDoAction(this, doAction); // ZMP (D-220): every player's label, for the simulation (the horse)
+        // ZMP: the A button label and Navi's call are the local player's (presentation)
+        if (Zmp_IsLocalAudioPlayer(this)) {
+            Interface_SetDoAction(play, doAction);
 
-        if (this->stateFlags2 & PLAYER_STATE2_NAVI_ALERT) {
-            if (this->focusActor != NULL) {
+            if (this->stateFlags2 & PLAYER_STATE2_NAVI_ALERT) {
+                if (this->focusActor != NULL) {
+                    Interface_SetNaviCall(play, 0x1E);
+                } else {
+                    Interface_SetNaviCall(play, 0x1D);
+                }
                 Interface_SetNaviCall(play, 0x1E);
             } else {
-                Interface_SetNaviCall(play, 0x1D);
+                Interface_SetNaviCall(play, 0x1F);
             }
-            Interface_SetNaviCall(play, 0x1E);
-        } else {
-            Interface_SetNaviCall(play, 0x1F);
         }
     }
 }
@@ -11242,10 +11343,15 @@ void Player_ProcessSceneCollision(PlayState* play, Player* this) {
         }
 
         if (this->actor.category == ACTORCAT_PLAYER) {
-            Audio_SetCodeReverb(SurfaceType_GetEcho(&play->colCtx, floorPoly, this->actor.floorBgId));
+            if (Zmp_IsLocalAudioPlayer(this)) { // ZMP: the reverb of the local player's floor
+                Audio_SetCodeReverb(SurfaceType_GetEcho(&play->colCtx, floorPoly, this->actor.floorBgId));
+            }
 
             if (this->actor.floorBgId == BGCHECK_SCENE) {
-                func_80074CE8(play, SurfaceType_GetLightSettingIndex(&play->colCtx, floorPoly, this->actor.floorBgId));
+                if (Zmp_DrivesLighting(this)) { // ZMP: only the anchor's floor sets the simulation's lighting
+                    func_80074CE8(play,
+                                  SurfaceType_GetLightSettingIndex(&play->colCtx, floorPoly, this->actor.floorBgId));
+                }
             } else {
                 DynaPoly_SetPlayerAbove(&play->colCtx, this->actor.floorBgId);
             }
@@ -11536,10 +11642,12 @@ void Player_UpdateCamAndSeqModes(PlayState* play, Player* this) {
 
         if (play->actorCtx.targetCtx.bgmEnemy != NULL) {
             seqMode = SEQ_MODE_ENEMY;
-            Audio_SetBgmEnemyVolume(sqrtf(play->actorCtx.targetCtx.bgmEnemy->xyzDistToPlayerSq));
+            if (Zmp_IsLocalAudioPlayer(this)) { // ZMP: combat music follows the local player
+                Audio_SetBgmEnemyVolume(sqrtf(play->actorCtx.targetCtx.bgmEnemy->xyzDistToPlayerSq));
+            }
         }
 
-        if (play->sceneNum != SCENE_FISHING_POND) {
+        if ((play->sceneNum != SCENE_FISHING_POND) && Zmp_IsLocalAudioPlayer(this)) { // ZMP
             Audio_SetSequenceMode(seqMode);
         }
     }
@@ -11967,7 +12075,7 @@ void Player_UpdateCommon(Player* this, PlayState* play, Input* input) {
                     if (DREG(25) != 0) {
                         DREG(25) = 0;
                     } else {
-                        AREG(6) = 1;
+                        Zmp_SetHorseEnter(1); // ZMP (D-233): this player enters the next scene riding
                     }
                 }
             }
@@ -12030,11 +12138,15 @@ void Player_UpdateCommon(Player* this, PlayState* play, Input* input) {
             (this->actor.category == ACTORCAT_PLAYER)) {
             CsCmdActorCue* linkActionCsCmd = play->csCtx.linkAction;
 
-            if ((linkActionCsCmd != NULL) && (sCueToCsActionMap[linkActionCsCmd->action] != 0)) {
+            // ZMP: only the player the cutscene is about follows its Link cues; the others wait
+            if ((linkActionCsCmd != NULL) && (sCueToCsActionMap[linkActionCsCmd->action] != 0) &&
+                Zmp_FollowsCutsceneScript(this)) {
                 Player_SetCsActionWithHaltedActors(play, NULL, 6);
                 Player_ZeroSpeedXZ(this);
             } else if ((this->csAction == 0) && !(this->stateFlags2 & PLAYER_STATE2_UNDERWATER) &&
-                       (play->csCtx.state != CS_STATE_UNSKIPPABLE_INIT)) {
+                       (play->csCtx.state != CS_STATE_UNSKIPPABLE_INIT) &&
+                       !Zmp_DownedIgnoresCutscene(this) && // ZMP: a downed Link lies down (finding AQ, D-120)
+                       !Zmp_OutsideGroupCutscene(this)) {  // ZMP: one in another room plays on (D-188)
                 Player_SetCsActionWithHaltedActors(play, NULL, 0x31);
                 Player_ZeroSpeedXZ(this);
             }
@@ -12226,7 +12338,8 @@ void Player_Update(Actor* thisx, PlayState* play) {
             Player_DetachHeldActor(play, this);
         }
 
-        if (this->stateFlags1 & (PLAYER_STATE1_INPUT_DISABLED | PLAYER_STATE1_IN_CUTSCENE)) {
+        if ((this->stateFlags1 & (PLAYER_STATE1_INPUT_DISABLED | PLAYER_STATE1_IN_CUTSCENE)) ||
+            Zmp_PlayerHeldByCutscene(this)) { // ZMP: a global cutscene about another player holds this one
             memset(&input, 0, sizeof(input));
         } else {
             input = play->state.input[0];
@@ -12551,6 +12664,8 @@ void Player_Draw(Actor* thisx, PlayState* play2) {
 
 void Player_Destroy(Actor* thisx, PlayState* play) {
     Player* this = (Player*)thisx;
+
+    Zmp_OnPlayerDestroy(this); // ZMP
 
     Effect_Delete(play, this->meleeWeaponEffectIndex);
 
@@ -13708,13 +13823,13 @@ void Player_Action_8084D3E4(Player* this, PlayState* play) {
         func_8083C0E8(this, play);
         this->stateFlags1 &= ~PLAYER_STATE1_ON_HORSE;
         this->actor.parent = NULL;
-        AREG(6) = 0;
+        Zmp_SetHorseEnter(0); // ZMP (D-233): this player's
 
         if (Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED) || (DREG(1) != 0)) {
-            gSaveContext.horseData.pos.x = rideActor->actor.world.pos.x;
-            gSaveContext.horseData.pos.y = rideActor->actor.world.pos.y;
-            gSaveContext.horseData.pos.z = rideActor->actor.world.pos.z;
-            gSaveContext.horseData.angle = rideActor->actor.shape.rot.y;
+            ZMP_HORSE_DATA.pos.x = rideActor->actor.world.pos.x; // ZMP (D-233): where this player left its Epona
+            ZMP_HORSE_DATA.pos.y = rideActor->actor.world.pos.y;
+            ZMP_HORSE_DATA.pos.z = rideActor->actor.world.pos.z;
+            ZMP_HORSE_DATA.angle = rideActor->actor.shape.rot.y;
         }
     } else {
         Camera_RequestSetting(Play_GetCamera(play, 0), CAM_SET_NORMAL0);
@@ -13983,12 +14098,15 @@ void func_8084DFAC(PlayState* play, Player* this) {
     this->yaw = this->actor.shape.rot.y;
 }
 
+// ZMP (D-118): file statics, not function statics, so that they travel with the state (Player_SaveState): what the
+// "ask to equip" text of an item being held up will equip, read ticks later by whoever is given the state meanwhile
+static s32 equipItem;
+static bool equipNow;
+
 s32 func_8084DFF4(PlayState* play, Player* this) {
     GetItemEntry giEntry;
     s32 temp1;
     s32 temp2;
-    static s32 equipItem;
-    static bool equipNow;
 
     if (this->getItemId == GI_NONE && this->getItemEntry.objectId == OBJECT_INVALID) {
         return 1;
@@ -14006,6 +14124,7 @@ s32 func_8084DFF4(PlayState* play, Player* this) {
                    equipItem >= ITEM_SWORD_KOKIRI && equipItem <= ITEM_TUNIC_ZORA && CHECK_AGE_REQ_ITEM(equipItem);
 
         Message_StartTextbox(play, giEntry.textId, &this->actor);
+        Zmp_OnItemGet(this, giEntry.itemId); // ZMP: the other players get a short notice instead of the text box
         // RANDOTODO: Macro this boolean check.
         if (!(giEntry.modIndex == MOD_RANDOMIZER && giEntry.itemId == RG_ICE_TRAP)) {
             if (giEntry.modIndex == MOD_NONE) {
@@ -14189,7 +14308,7 @@ void Player_Action_8084E3C4(Player* this, PlayState* play) {
 
         if ((this->talkActor != NULL) && (this->talkActor == this->unk_6A8)) {
             Player_StartTalking(play, this->talkActor);
-        } else if (this->naviTextId < 0) {
+        } else if ((this->naviTextId < 0) && (this->naviActor != NULL)) { // ZMP (D-235): a Link without Navi
             this->talkActor = this->naviActor;
             this->naviActor->textId = -this->naviTextId;
             Player_StartTalking(play, this->talkActor);
@@ -14214,7 +14333,10 @@ void Player_Action_8084E3C4(Player* this, PlayState* play) {
         this->stateFlags1 |= PLAYER_STATE1_IN_ITEM_CS | PLAYER_STATE1_IN_CUTSCENE;
         this->stateFlags2 |= PLAYER_STATE2_OCARINA_PLAYING;
 
-        if (Actor_Spawn(&play->actorCtx, play, ACTOR_DEMO_KANKYO, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0xF) == NULL) {
+        // ZMP: with companions in the scene only this player travels (they get an invitation), without the scripted
+        // warp cutscene that would hold everybody (phase 5b)
+        if (Zmp_WarpSongStart(this, play)) {
+        } else if (Actor_Spawn(&play->actorCtx, play, ACTOR_DEMO_KANKYO, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0xF) == NULL) {
             Environment_WarpSongLeave(play);
         }
 
@@ -14787,6 +14909,7 @@ void Player_Action_8084F88C(Player* this, PlayState* play) {
         }
 
         play->transitionTrigger = TRANS_TRIGGER_START;
+        Zmp_NoteTransitionBy(this); // ZMP: only this player respawns (phase 5)
     }
 }
 
@@ -15131,6 +15254,7 @@ void Player_Action_8085063C(Player* this, PlayState* play) {
         if (play->msgCtx.choiceIndex == 0) { // Returns to FW
             gSaveContext.respawnFlag = 3;
             play->transitionTrigger = TRANS_TRIGGER_START;
+            Zmp_NoteTransitionBy(this); // ZMP: only this player warps (phase 5)
             play->nextEntranceIndex = gSaveContext.respawn[RESPAWN_MODE_TOP].entranceIndex;
             play->transitionType = TRANS_TYPE_FADE_WHITE_FAST;
             Interface_SetSubTimerToFinalSecond(play);
@@ -16578,7 +16702,8 @@ void Player_StartTalking(PlayState* play, Actor* actor) {
         this->stateFlags1 |= PLAYER_STATE1_TALKING | PLAYER_STATE1_IN_CUTSCENE;
     }
 
-    if ((this->naviActor == this->talkActor) && ((this->talkActor->textId & 0xFF00) != 0x200)) {
+    if ((this->naviActor != NULL) && (this->naviActor == this->talkActor) && // ZMP (D-235): a Link without Navi
+        ((this->talkActor->textId & 0xFF00) != 0x200)) {
         this->naviActor->flags |= ACTOR_FLAG_TALK;
         Player_SetTurnAroundCamera(play, CAM_ITEM_TYPE_11);
     }
@@ -16607,6 +16732,8 @@ void Player_StartTalking(PlayState* play, Actor* actor) {
     F(sWorldYawToTouchedWall)           \
     F(sFloorShapePitch)                 \
     F(sUseHeldItem)                     \
-    F(sHeldItemButtonIsHeldDown)
+    F(sHeldItemButtonIsHeldDown)        \
+    F(equipItem) /* ZMP (D-118) */      \
+    F(equipNow)  /* ZMP (D-118) */
 
 SHIP_SAVESTATE_DEFINE(Player, PLAYER_SHIP_SAVESTATE_FIELDS)

@@ -1,5 +1,6 @@
 #include "global.h"
 #include "vt.h"
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP (D-222; D-233: ZMP_HORSE_DATA and Zmp_HorseEnter are the player's in context)
 #include <assert.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
@@ -19,20 +20,20 @@ s32 Horse_CanSpawn(s32 scene) {
 }
 
 void Horse_ResetHorseData(PlayState* play) {
-    gSaveContext.horseData.scene = SCENE_HYRULE_FIELD;
-    gSaveContext.horseData.pos.x = -1840;
-    gSaveContext.horseData.pos.y = 72;
-    gSaveContext.horseData.pos.z = 5497;
-    gSaveContext.horseData.angle = -27353;
+    ZMP_HORSE_DATA.scene = SCENE_HYRULE_FIELD;
+    ZMP_HORSE_DATA.pos.x = -1840;
+    ZMP_HORSE_DATA.pos.y = 72;
+    ZMP_HORSE_DATA.pos.z = 5497;
+    ZMP_HORSE_DATA.angle = -27353;
 }
 
 void Horse_FixLakeHyliaPosition(PlayState* play) {
-    if (gSaveContext.horseData.scene == SCENE_LAKE_HYLIA) {
-        gSaveContext.horseData.scene = SCENE_LAKE_HYLIA;
-        gSaveContext.horseData.pos.x = -2065;
-        gSaveContext.horseData.pos.y = -863;
-        gSaveContext.horseData.pos.z = 1839;
-        gSaveContext.horseData.angle = 0;
+    if (ZMP_HORSE_DATA.scene == SCENE_LAKE_HYLIA) {
+        ZMP_HORSE_DATA.scene = SCENE_LAKE_HYLIA;
+        ZMP_HORSE_DATA.pos.x = -2065;
+        ZMP_HORSE_DATA.pos.y = -863;
+        ZMP_HORSE_DATA.pos.z = 1839;
+        ZMP_HORSE_DATA.angle = 0;
     }
 }
 
@@ -43,6 +44,14 @@ typedef struct {
     /* 0x0A */ s16 type;
 } HorseSpawn;
 
+// ZMP (D-233): a horse spawned for the player in context is that player's (EnHorse.zmpOwner), tagged here, at the
+// spawn: the actor's init runs later, once its object is loaded, in whatever context an untagged horse gets.
+static Actor* ZmpHorseSpawn(PlayState* play, f32 x, f32 y, f32 z, s16 rotX, s16 rotY, s16 rotZ, s16 params) {
+    Actor* horse = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, x, y, z, rotX, rotY, rotZ, params);
+    Zmp_TagHorse(horse);
+    return horse;
+}
+
 void Horse_SetupInGameplay(PlayState* play, Player* player) {
     s32 i;
     HorseSpawn horseSpawns[] = {
@@ -51,16 +60,17 @@ void Horse_SetupInGameplay(PlayState* play, Player* player) {
         { SCENE_LON_LON_RANCH, 928, 0, -2280, 0, 2 },
     };
 
-    if ((AREG(6) != 0) && (Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED) || (DREG(1) != 0))) {
-        player->rideActor = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, player->actor.world.pos.x,
-                                        player->actor.world.pos.y, player->actor.world.pos.z, player->actor.shape.rot.x,
-                                        player->actor.shape.rot.y, player->actor.shape.rot.z, 9);
+    if ((Zmp_HorseEnter() != 0) && (Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED) || (DREG(1) != 0))) {
+        player->rideActor =
+            ZmpHorseSpawn(play, player->actor.world.pos.x, player->actor.world.pos.y, player->actor.world.pos.z,
+                          player->actor.shape.rot.x, player->actor.shape.rot.y, player->actor.shape.rot.z, 9);
 
         assert(player->rideActor != NULL);
 
         Actor_MountHorse(play, player, player->rideActor);
         Actor_RequestHorseCameraSetting(play, player);
-        gSaveContext.horseData.scene = play->sceneNum;
+        ZMP_HORSE_DATA.scene = play->sceneNum;
+        Zmp_SetHorseEnter(0); // ZMP (D-233): this player's (EnHorse_Init clears the original's AREG(6))
 
         if (play->sceneNum == SCENE_GERUDOS_FORTRESS) {
             player->rideActor->room = -1;
@@ -68,14 +78,13 @@ void Horse_SetupInGameplay(PlayState* play, Player* player) {
     } else if ((play->sceneNum == SCENE_GERUDOS_FORTRESS) && (gSaveContext.minigameState == 3)) {
         Actor* horseActor;
         gSaveContext.minigameState = 0;
-        horseActor = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, 3586.0f, 1413.0f, -402.0f, 0, 0x4000, 0, 1);
+        horseActor = ZmpHorseSpawn(play, 3586.0f, 1413.0f, -402.0f, 0, 0x4000, 0, 1);
         horseActor->room = -1;
     } else if ((gSaveContext.entranceIndex == ENTR_LON_LON_RANCH_7) &&
                (Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED))) {
-        Actor* horseActor =
-            Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, -25.0f, 0.0f, -1600.0f, 0, -0x4000, 0, 1);
+        Actor* horseActor = ZmpHorseSpawn(play, -25.0f, 0.0f, -1600.0f, 0, -0x4000, 0, 1);
         assert(horseActor != NULL);
-    } else if ((play->sceneNum == gSaveContext.horseData.scene) &&
+    } else if ((play->sceneNum == ZMP_HORSE_DATA.scene) &&
                (((Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED) != 0) &&
                  (!IS_RANDO || (IS_RANDO && CHECK_QUEST_ITEM(QUEST_SONG_EPONA) &&
                                 GameInteractor_Should(VB_HAVE_OCARINA_NOTE_D5, true) &&
@@ -84,13 +93,12 @@ void Horse_SetupInGameplay(PlayState* play, Player* player) {
                                 (INV_CONTENT(ITEM_OCARINA_FAIRY) != ITEM_NONE)))) ||
                 DREG(1) != 0)) {
         // "Set by existence of horse %d %d %d"
-        osSyncPrintf("馬存在によるセット %d %d %d\n", gSaveContext.horseData.scene,
+        osSyncPrintf("馬存在によるセット %d %d %d\n", ZMP_HORSE_DATA.scene,
                      Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED), DREG(1));
 
-        if (Horse_CanSpawn(gSaveContext.horseData.scene)) {
-            Actor* horseActor = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, gSaveContext.horseData.pos.x,
-                                            gSaveContext.horseData.pos.y, gSaveContext.horseData.pos.z, 0,
-                                            gSaveContext.horseData.angle, 0, 1);
+        if (Horse_CanSpawn(ZMP_HORSE_DATA.scene)) {
+            Actor* horseActor = ZmpHorseSpawn(play, ZMP_HORSE_DATA.pos.x, ZMP_HORSE_DATA.pos.y, ZMP_HORSE_DATA.pos.z, 0,
+                                              ZMP_HORSE_DATA.angle, 0, 1);
             assert(horseActor != NULL);
             if (play->sceneNum == SCENE_GERUDOS_FORTRESS) {
                 horseActor->room = -1;
@@ -98,21 +106,20 @@ void Horse_SetupInGameplay(PlayState* play, Player* player) {
         } else {
             osSyncPrintf(VT_COL(RED, WHITE));
             // "Horse_SetNormal():%d set spot is no good."
-            osSyncPrintf("Horse_SetNormal():%d セットスポットまずいです。\n", gSaveContext.horseData.scene);
+            osSyncPrintf("Horse_SetNormal():%d セットスポットまずいです。\n", ZMP_HORSE_DATA.scene);
             osSyncPrintf(VT_RST);
             Horse_ResetHorseData(play);
         }
     } else if ((play->sceneNum == SCENE_LON_LON_RANCH) && !Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED) &&
                (DREG(1) == 0)) {
-        Actor* horseActor = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, 0.0f, 0.0f, -500.0f, 0, 0, 0, 1);
+        Actor* horseActor = ZmpHorseSpawn(play, 0.0f, 0.0f, -500.0f, 0, 0, 0, 1);
         assert(horseActor != NULL);
     } else if (Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED) || (DREG(1) != 0)) {
         for (i = 0; i < ARRAY_COUNT(horseSpawns); i++) {
             HorseSpawn* horseSpawn = &horseSpawns[i];
             if (horseSpawn->scene == play->sceneNum) {
-                Actor* horseActor =
-                    Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, horseSpawn->pos.x, horseSpawn->pos.y,
-                                horseSpawn->pos.z, 0, horseSpawn->angle, 0, horseSpawn->type);
+                Actor* horseActor = ZmpHorseSpawn(play, horseSpawn->pos.x, horseSpawn->pos.y, horseSpawn->pos.z, 0,
+                                                  horseSpawn->angle, 0, horseSpawn->type);
                 assert(horseActor != NULL);
                 if (play->sceneNum == SCENE_GERUDOS_FORTRESS) {
                     horseActor->room = -1;
@@ -123,7 +130,7 @@ void Horse_SetupInGameplay(PlayState* play, Player* player) {
         }
     } else if (!Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED)) {
         if ((DREG(1) == 0) && (play->sceneNum == SCENE_LON_LON_BUILDINGS) && !IS_DAY) {
-            Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, 0.0f, 0.0f, -60.0f, 0, 0x7360, 0, 1);
+            ZmpHorseSpawn(play, 0.0f, 0.0f, -60.0f, 0, 0x7360, 0, 1);
         }
     }
 }
@@ -161,22 +168,20 @@ void Horse_SetupInCutscene(PlayState* play, Player* player) {
             spawnPos = spawnPositions[3];
         }
 
-        player->rideActor = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, spawnPos.x, spawnPos.y, spawnPos.z, 0,
-                                        player->actor.world.rot.y, 0, 7);
+        player->rideActor = ZmpHorseSpawn(play, spawnPos.x, spawnPos.y, spawnPos.z, 0, player->actor.world.rot.y, 0, 7);
         assert(player->rideActor != NULL);
 
         Actor_MountHorse(play, player, player->rideActor);
         Actor_RequestHorseCameraSetting(play, player);
-        gSaveContext.horseData.scene = play->sceneNum;
+        ZMP_HORSE_DATA.scene = play->sceneNum;
     } else if ((play->sceneNum == SCENE_LON_LON_RANCH) && ((gSaveContext.eventInf[0] & 0xF) == 6) &&
                (Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED) == 0) && (DREG(1) == 0)) {
-        player->rideActor =
-            Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, 894.0f, 0.0f, -2084.0f, 0, -0x7FFF, 0, 5);
+        player->rideActor = ZmpHorseSpawn(play, 894.0f, 0.0f, -2084.0f, 0, -0x7FFF, 0, 5);
         assert(player->rideActor != NULL);
 
         Actor_MountHorse(play, player, player->rideActor);
         Actor_RequestHorseCameraSetting(play, player);
-        gSaveContext.horseData.scene = play->sceneNum;
+        ZMP_HORSE_DATA.scene = play->sceneNum;
 
         if (play->sceneNum == SCENE_GERUDOS_FORTRESS) {
             player->rideActor->room = -1;
@@ -204,8 +209,8 @@ void Horse_SetupInCutscene(PlayState* play, Player* player) {
                     }
 
                     player->rideActor =
-                        Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, D_8011F9B8[i].pos.x, D_8011F9B8[i].pos.y,
-                                    D_8011F9B8[i].pos.z, 0, player->actor.world.rot.y, 0, D_8011F9B8[i].type);
+                        ZmpHorseSpawn(play, D_8011F9B8[i].pos.x, D_8011F9B8[i].pos.y, D_8011F9B8[i].pos.z, 0,
+                                      player->actor.world.rot.y, 0, D_8011F9B8[i].type);
                     assert(player->rideActor != NULL);
 
                     Actor_MountHorse(play, player, player->rideActor);
@@ -213,19 +218,26 @@ void Horse_SetupInCutscene(PlayState* play, Player* player) {
                 } else if ((D_8011F9B8[i].type == 5) || (D_8011F9B8[i].type == 6) || (D_8011F9B8[i].type == 8)) {
                     Vec3f sp54;
                     s32 temp = 0;
+                    f32 laneZ = 0.0f;
 
                     if (((gSaveContext.eventInf[0] & 0x10) >> 4) && D_8011F9B8[i].type == 6) {
                         temp = 0x8000;
                     }
+                    // ZMP (D-234): Ingo's race is run by every Link at once: each one's horse in its own lane along the
+                    // start line (lane 0 the Link who accepted, at the original spot; the others 140 and then 95 apart
+                    // towards -z, within the finish line and clear of Ingo's horse at z -1650)
+                    if (D_8011F9B8[i].type == 6 && Zmp_RaceLane() > 0) {
+                        laneZ = -(140.0f + 95.0f * (Zmp_RaceLane() - 1));
+                    }
 
                     player->rideActor =
-                        Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, D_8011F9B8[i].pos.x, D_8011F9B8[i].pos.y,
-                                    D_8011F9B8[i].pos.z, 0, D_8011F9B8[i].angle, 0, D_8011F9B8[i].type | temp);
+                        ZmpHorseSpawn(play, D_8011F9B8[i].pos.x, D_8011F9B8[i].pos.y, D_8011F9B8[i].pos.z + laneZ, 0,
+                                      D_8011F9B8[i].angle, 0, D_8011F9B8[i].type | temp);
                     assert(player->rideActor != NULL);
 
                     player->actor.world.pos.x = D_8011F9B8[i].pos.x;
                     player->actor.world.pos.y = D_8011F9B8[i].pos.y;
-                    player->actor.world.pos.z = D_8011F9B8[i].pos.z;
+                    player->actor.world.pos.z = D_8011F9B8[i].pos.z + laneZ;
                     player->actor.shape.rot.x = player->actor.shape.rot.z = 0;
                     player->actor.shape.rot.y = D_8011F9B8[i].angle;
 
@@ -238,8 +250,8 @@ void Horse_SetupInCutscene(PlayState* play, Player* player) {
 
                     Play_CameraSetAtEye(play, play->activeCamera, &player->actor.world.pos, &sp54);
                 } else {
-                    Actor_Spawn(&play->actorCtx, play, ACTOR_EN_HORSE, D_8011F9B8[i].pos.x, D_8011F9B8[i].pos.y,
-                                D_8011F9B8[i].pos.z, 0, D_8011F9B8[i].angle, 0, D_8011F9B8[i].type);
+                    ZmpHorseSpawn(play, D_8011F9B8[i].pos.x, D_8011F9B8[i].pos.y, D_8011F9B8[i].pos.z, 0,
+                                  D_8011F9B8[i].angle, 0, D_8011F9B8[i].type);
                 }
                 break;
             }
@@ -249,10 +261,10 @@ void Horse_SetupInCutscene(PlayState* play, Player* player) {
 
 void Horse_InitPlayerHorse(PlayState* play, Player* player) {
     if (LINK_IS_ADULT) {
-        if (!Horse_CanSpawn(gSaveContext.horseData.scene)) {
+        if (!Horse_CanSpawn(ZMP_HORSE_DATA.scene)) {
             osSyncPrintf(VT_COL(RED, WHITE));
             // "Horse_Set_Check():%d set spot is no good."
-            osSyncPrintf("Horse_Set_Check():%d セットスポットまずいです。\n", gSaveContext.horseData.scene);
+            osSyncPrintf("Horse_Set_Check():%d セットスポットまずいです。\n", ZMP_HORSE_DATA.scene);
             osSyncPrintf(VT_RST);
             Horse_ResetHorseData(play);
         }
@@ -266,7 +278,7 @@ void Horse_InitPlayerHorse(PlayState* play, Player* player) {
                  (gSaveContext.respawnFlag == 0)) ||
                 ((play->sceneNum == SCENE_LON_LON_RANCH) && ((gSaveContext.eventInf[0] & 0xF) == 6) &&
                  !Flags_GetEventChkInf(EVENTCHKINF_EPONA_OBTAINED) && (DREG(1) == 0))) {
-                Horse_SetupInCutscene(play, player);
+                Zmp_StoryHorseSetup(play, player, Horse_SetupInCutscene); // ZMP (D-222): the story's Link
             } else {
                 Horse_SetupInGameplay(play, player);
             }

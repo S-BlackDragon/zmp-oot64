@@ -418,7 +418,13 @@ static s8 sPhase4HP;
     F(sPhase2Timer)                      \
     F(sPhase4HP)
 
-SHIP_SAVESTATE_DEFINE(BossVa, BOSS_VA_SHIP_SAVESTATE_FIELDS)
+// ZMP (family 1, B2, D-116): the intro's and the death's camera, moved a little every tick towards its next point and
+// copied to the main camera at the end: who entered during them computed another camera (and since phase 5b the
+// picture decides what is on screen): resynchronisations that did not cure it.
+#define BOSS_VA_ZMP_NEW_FIELDS(F) \
+    F(sSubCamEye) F(sSubCamAt) F(sSubCamEyeNext) F(sSubCamAtNext) F(sSubCamEyeMaxVelFrac) F(sSubCamAtMaxVelFrac)
+
+ZMP_SAVESTATE_DEFINE(BossVa, BOSS_VA_SHIP_SAVESTATE_FIELDS, BOSS_VA_ZMP_NEW_FIELDS, ZMP_SAVESTATE_NONE)
 
 void BossVa_SetupAction(BossVa* this, BossVaActionFunc func) {
     this->actionFunc = func;
@@ -4071,4 +4077,70 @@ void BossVa_Reset(void) {
     for (u8 i = 0; i < ARRAY_SIZE(sBodyBari); i++) {
         sBodyBari[i] = 0;
     }
+}
+
+// ZMP: phase 6 scenario tests (test harness only; nothing in the game calls these). The fight's progress lives in the
+// statics of this file (they travel in the state, SHIP_SAVESTATE above): the harness reads them, and a scenario can
+// skip the first three phases (supports cut, every Bari dead) or set the hits left in the last one.
+void BossVa_ZmpDebug(s32* out) {
+    out[0] = sFightPhase;
+    out[1] = sCsState;
+    out[2] = sPhase4HP;
+    out[3] = sBodyState;
+    out[4] = sKillBari;
+    out[5] = sDoorState;
+}
+
+// what 0: the supports are cut (as a sword cuts them), every Bari goes away and the body goes on to its last phase (it
+// gets there at the end of its current animation, through the original phase changes; BossVa_SetupBodyPhase4 then
+// sets 4 hits). The cut supports and the zappers stay, as in the original fight: the death cutscene only goes on
+// through them (DEATH_ZAPPER_1..3 the zappers, DEATH_SHELL_BURST..CORE_TUMORS the cut supports); killing them here
+// left it waiting for ever (reports/fase6/FAMILIAS.md S3). what 1: the
+// body, already in its last phase, is in the last of its three rounds with `value` hits left (the next hits kill it).
+// what 2: the body, in its last phase, is stunned for `value` ticks (160 if 0), as the boomerang stuns it: the sword
+// hurts it meanwhile. Returns 0 when it does nothing (no battle running, or not in the last phase yet).
+s32 BossVa_ZmpStage(PlayState* play, s32 what, s32 value) {
+    s32 cat;
+    Actor* a;
+
+    if (sCsState != BOSSVA_BATTLE) {
+        return 0;
+    }
+    if (what == 0) {
+        for (cat = 0; cat < ACTORCAT_MAX; cat++) {
+            for (a = play->actorCtx.actorLists[cat].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_BOSS_VA) {
+                    continue;
+                }
+                if (a->params >= BOSSVA_SUPPORT_1 && a->params <= BOSSVA_SUPPORT_3) {
+                    if (((BossVa*)a)->actionFunc != BossVa_SupportCut) {
+                        BossVa_SetupSupportCut((BossVa*)a, play);
+                    }
+                } else if (a->params >= BOSSVA_BARI_UPPER_1 && a->params <= BOSSVA_BARI_LOWER_5) {
+                    Actor_Kill(a);
+                }
+            }
+        }
+        sFightPhase = PHASE_4;
+        return 1;
+    }
+    if (what == 1 && sFightPhase >= PHASE_4 && sFightPhase < PHASE_DEATH && sBodyState != 0) {
+        sFightPhase = PHASE_DEATH - 1;
+        sPhase4HP = (s8)value;
+        return 1;
+    }
+    if (what == 2 && sFightPhase >= PHASE_4 && sFightPhase < PHASE_DEATH) {
+        for (a = play->actorCtx.actorLists[ACTORCAT_BOSS].head; a != NULL; a = a->next) {
+            if (a->id == ACTOR_BOSS_VA && a->params == BOSSVA_BODY) {
+                BossVa* body = (BossVa*)a;
+                // (the boomerang's branch of BossVa_BodyPhase4)
+                body->timer = (value > 0) ? value : 160;
+                body->vaBodySpinRate = 0;
+                body->actor.speedXZ = 0.0f;
+                Actor_SetColorFilter(&body->actor, 0, 125, 0, 255);
+                return 1;
+            }
+        }
+    }
+    return 0;
 }

@@ -456,6 +456,8 @@ s32 Actor_OfferTalkNearColChkInfoCylinder(Actor* actor, PlayState* play);
 u32 Actor_TextboxIsClosing(Actor* actor, PlayState* play);
 s8 Actor_GetPlayerExchangeItemId(PlayState* play);
 void Actor_GetScreenPos(PlayState* play, Actor* actor, s16* x, s16* y);
+void Actor_GetTalkScreenPos(PlayState* play, Actor* actor, s16* x, s16* y, s16 minX, s16 maxX, s16 minY,
+                            s16 maxY); // ZMP (D-206)
 u32 Actor_HasParent(Actor* actor, PlayState* play);
 // TODO: Rename the follwing 3 functions using whatever scheme we use when we rename Actor_OfferGetItem and Actor_OfferGetItemNearby.
 s32 GiveItemEntryWithoutActor(PlayState* play, GetItemEntry getItemEntry);
@@ -917,6 +919,7 @@ f32 Environment_LerpWeight(u16 max, u16 min, u16 val);
 f32 Environment_LerpWeightAccelDecel(u16 endFrame, u16 startFrame, u16 curFrame, u16 accelDuration, u16 decelDuration);
 void Environment_UpdateSkybox(PlayState* play, u8 skyboxId, EnvironmentContext* envCtx, SkyboxContext* skyboxCtx);
 void Environment_EnableUnderwaterLights(PlayState* play, s32 waterLightsIndex);
+s32 Environment_ZmpWaterLights(PlayState* play, s32 index, EnvLightSettings* out); // ZMP
 void Environment_DisableUnderwaterLights(PlayState* play);
 void Environment_Update(PlayState* play, EnvironmentContext* envCtx, LightContext* lightCtx,
                         PauseContext* pauseCtx, MessageContext* msgCtx, GameOverContext* gameOverCtx,
@@ -1797,6 +1800,8 @@ void Math3D_DrawCylinder(PlayState* play, Cylinder16* cyl);
 s16 Math_Atan2S(f32 x, f32 y);
 f32 Math_Atan2F(f32 x, f32 y);
 void Matrix_Init(GameState* gameState);
+void Matrix_ZmpGetPointers(MtxF** stack, MtxF** current); // ZMP
+void Matrix_ZmpSetPointers(MtxF* stack, MtxF* current);   // ZMP
 void Matrix_Push(void);
 void Matrix_Pop(void);
 void Matrix_Get(MtxF* dest);
@@ -2209,6 +2214,9 @@ s8 PadUtils_GetRelYImpl(Input* input);
 s8 PadUtils_GetRelX(Input* input);
 s8 PadUtils_GetRelY(Input* input);
 void PadUtils_UpdateRelXY(Input* input);
+// ZMP: EffectSs free-slot search index (simulation state carried by the portable save state)
+s32 EffectSs_ZmpGetSearchIndex(void);
+void EffectSs_ZmpSetSearchIndex(s32 index);
 s8 PadUtils_GetCurRX(Input* input);
 s8 PadUtils_GetCurRY(Input* input);
 void PadUtils_SetRelRXY(Input* input, s32 x, s32 y);
@@ -2250,6 +2258,8 @@ void SystemArena_Cleanup(void);
 u8 SystemArena_IsInitalized(void);
 u32 Rand_Next(void);
 void Rand_Seed(u32 seed);
+u32 Rand_ZmpGetState(u32* randFloat);              // ZMP
+void Rand_ZmpSetState(u32 randInt, u32 randFloat); // ZMP
 f32 Rand_ZeroOne(void);
 f32 Rand_Centered(void);
 void Rand_Seed_Variable(u32* rndNum, u32 seed);

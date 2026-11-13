@@ -1,4 +1,5 @@
 #include "z_kaleido_scope.h"
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
 #include <stdlib.h>
 #include <string.h>
 
@@ -1836,7 +1837,8 @@ void KaleidoScope_DrawPages(PlayState* play, GraphicsContext* gfxCtx) {
             POLY_OPA_DISP =
                 KaleidoScope_QuadTextureIA8(POLY_OPA_DISP, sPromptChoiceTexs[gSaveContext.language][1], 48, 16, 16);
         } else if (((pauseCtx->state == 7 && pauseCtx->unk_1EC >= 4) || pauseCtx->state == 0xF) &&
-                   !CVarGetInteger(CVAR_ENHANCEMENT("SkipSaveConfirmation"), 0)) {
+                   !CVarGetInteger(CVAR_ENHANCEMENT("SkipSaveConfirmation"), 0) &&
+                   Zmp_AllowSaveWrite()) { // ZMP: "Game saved." only on the PC that saved (the others get a notice)
             POLY_OPA_DISP =
                 KaleidoScope_QuadTextureIA8(POLY_OPA_DISP, sSaveConfirmationTexs[gSaveContext.language], 152, 16, 0);
         } else if ((pauseCtx->state != 7) || (pauseCtx->unk_1EC < 4)) {
@@ -3883,6 +3885,9 @@ void KaleidoScope_Update(PlayState* play) {
             pauseCtx->unk_204 = -314.0f;
 
             pauseCtx->playerSegment = (void*)(((uintptr_t)play->objectCtx.spaceStart + 0x30) & ~0x3F);
+            if (Zmp_PauseScratch() != NULL) { // ZMP: the local menu must not write into the simulation's memory
+                pauseCtx->playerSegment = (void*)(((uintptr_t)Zmp_PauseScratch() + 0x30) & ~0x3F);
+            }
 
             size1 = func_80091738(play, pauseCtx->playerSegment, &pauseCtx->playerSkelAnime);
             osSyncPrintf("プレイヤー size1＝%x\n", size1);
@@ -4425,6 +4430,21 @@ void KaleidoScope_Update(PlayState* play) {
                                 WREG(2) = -6240;
                                 YREG(8) = pauseCtx->unk_204;
                                 func_800F64E0(0);
+                            } else if (!Zmp_AllowSaveWrite()) {
+                                // ZMP: only the PC of the room's host writes the game. Here nothing was saved: no
+                                // "Game saved." screen, the menu closes its question and a notice says why.
+                                Zmp_NoteSaveSkipped();
+                                Interface_SetDoAction(play, DO_ACTION_NONE);
+                                gSaveContext.buttonStatus[0] = gSaveContext.buttonStatus[1] =
+                                    gSaveContext.buttonStatus[2] = gSaveContext.buttonStatus[3] = BTN_ENABLED;
+                                gSaveContext.buttonStatus[5] = gSaveContext.buttonStatus[6] =
+                                    gSaveContext.buttonStatus[7] = gSaveContext.buttonStatus[8] = BTN_ENABLED;
+                                gSaveContext.hudVisibilityMode = 0;
+                                Interface_ChangeHudVisibilityMode(50);
+                                pauseCtx->unk_1EC = 2;
+                                WREG(2) = -6240;
+                                YREG(8) = pauseCtx->unk_204;
+                                func_800F64E0(0);
                             } else {
                                 Audio_PlaySfxGeneral(NA_SE_SY_PIECE_OF_HEART, &gSfxDefaultPos, 4,
                                                      &gSfxDefaultFreqAndVolScale, &gSfxDefaultFreqAndVolScale,
@@ -4773,8 +4793,10 @@ void KaleidoScope_Update(PlayState* play) {
                     pauseCtx->state = 0;
                     R_UPDATE_RATE = 3;
                     R_PAUSE_MENU_MODE = 0;
-                    func_800981B8(&play->objectCtx);
-                    func_800418D0(&play->colCtx, play);
+                    if (!Zmp_PauseRunningLocal()) { // ZMP: the local menu did not touch object memory
+                        func_800981B8(&play->objectCtx);
+                        func_800418D0(&play->colCtx, play);
+                    }
                     if (pauseCtx->promptChoice == 0 && GameInteractor_Should(VB_BE_ABLE_TO_SAVE, true)) {
                         Play_TriggerRespawn(play);
                         gSaveContext.respawnFlag = -2;
@@ -4797,6 +4819,10 @@ void KaleidoScope_Update(PlayState* play) {
                         osSyncPrintf("MAGIC_NOW=%d ", gSaveContext.magic);
                         osSyncPrintf("Z_MAGIC_NOW_NOW=%d\n", gSaveContext.magicFillTarget);
                         osSyncPrintf(VT_RST);
+                    } else if (Zmp_GameOverQuit()) { // ZMP: the group ends in order, everybody to the file select
+                        play->state.running = 0;
+                        SET_NEXT_GAMESTATE(&play->state, FileChoose_Init, FileChooseContext);
+                        GameInteractor_ExecuteOnExitGame(gSaveContext.fileNum);
                     } else {
                         play->state.running = 0;
                         SET_NEXT_GAMESTATE(&play->state, Opening_Init, OpeningContext);
@@ -4841,8 +4867,10 @@ void KaleidoScope_Update(PlayState* play) {
 
             CVarSetInteger(CVAR_GENERAL("PauseMenuAnimatedLinkTriforce"), 0);
 
-            func_800981B8(&play->objectCtx);
-            func_800418D0(&play->colCtx, play);
+            if (!Zmp_PauseRunningLocal()) { // ZMP: the local menu did not touch object memory
+                func_800981B8(&play->objectCtx);
+                func_800418D0(&play->colCtx, play);
+            }
 
             switch (play->sceneNum) {
                 case SCENE_DEKU_TREE:

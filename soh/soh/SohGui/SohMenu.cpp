@@ -87,6 +87,8 @@ void SohMenu::AddMenuElements() {
     AddMenuSettings();
     AddMenuEnhancements();
     AddMenuRandomizer();
+    // ZMP web (D-238): the Network menu stays on the web too: ZMP's own entry (Zmp/Ui/ZmpWindow.cpp) lives under it.
+    // (ShipWeb dropped it because Crowd Control, Anchor and Sail need TCP sockets; those entries are inert here.)
     AddMenuNetwork();
     AddMenuDevTools();
 

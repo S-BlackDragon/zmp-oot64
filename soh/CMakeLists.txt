@@ -159,6 +159,11 @@ else()
     list(FILTER soh__ EXCLUDE REGEX "soh/Enhancements/speechsynthesizer/(Darwin|SAPI)")
 endif()
 
+# ZMP: the harness sources only exist in test builds.
+if(NOT ZMP_HARNESS)
+    list(FILTER soh__ EXCLUDE REGEX "soh/Zmp/Harness/")
+endif()
+
 find_library(ESPEAK espeak-ng)
 if (NOT ESPEAK)
     list(FILTER soh__ EXCLUDE REGEX "soh/Enhancements/speechsynthesizer/ESpeak")
@@ -227,6 +232,26 @@ set(ALL_FILES
 # Target
 ################################################################################
 add_executable(${PROJECT_NAME} ${ALL_FILES})
+
+# ZMP: game memory stores pointers to functions and constant data of the executable (actor update
+# functions, asset names). Phases 1 to 5 linked with a fixed image base (/DYNAMICBASE:NO) so that a save
+# state made by one process was valid in another. Since phase 5b the save state relocates those pointers
+# when it is loaded (StateBlob.cpp, docs/DECISIONES.md D-073) and the executable is linked like any
+# other program, with address space layout randomization. ZMP_FIXED_IMAGE_BASE=ON brings the old link back.
+option(ZMP_FIXED_IMAGE_BASE "Link soh.exe at a fixed address (no ASLR), as before phase 5b" OFF)
+if (MSVC)
+    if (ZMP_FIXED_IMAGE_BASE)
+        target_link_options(${PROJECT_NAME} PRIVATE /DYNAMICBASE:NO)
+    else()
+        target_link_options(${PROJECT_NAME} PRIVATE /DYNAMICBASE /HIGHENTROPYVA)
+    endif()
+endif()
+
+# ZMP: harness define (see ZMP_HARNESS option in the root CMakeLists.txt)
+if(ZMP_HARNESS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ZMP_HARNESS=1)
+    message(STATUS "ZMP: test harness enabled")
+endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
 use_props(${PROJECT_NAME} "${CMAKE_CONFIGURATION_TYPES}" "${DEFAULT_CXX_PROPS}")
@@ -584,15 +609,17 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
             >
             $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>
             $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-enum-enum-conversion>
-            -pthread
+            $<$<NOT:$<BOOL:${EMSCRIPTEN}>>:-pthread>
         ${CPU_OPTION}
         )
 
-        target_link_options(${PROJECT_NAME} PRIVATE
-            -pthread
-                #-fsanitize=address
-            -Wl,-export-dynamic
-        )
+        if(NOT EMSCRIPTEN)
+            target_link_options(${PROJECT_NAME} PRIVATE
+                -pthread
+                    #-fsanitize=address
+                -Wl,-export-dynamic
+            )
+        endif()
     endif()
 endif()
 ################################################################################
@@ -685,6 +712,17 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "CafeOS")
     target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
         ${DEVKITPRO}/portlibs/wiiu/include/
     )
+elseif(EMSCRIPTEN)
+    find_library(MATH_LIBRARY m)
+    set(ADDITIONAL_LIBRARY_DEPENDENCIES
+        "libultraship;"
+        "torch;"
+        SDL2::SDL2
+        ${CMAKE_DL_LIBS}
+    )
+    if(MATH_LIBRARY)
+        list(APPEND ADDITIONAL_LIBRARY_DEPENDENCIES ${MATH_LIBRARY})
+    endif()
 else()
     find_package(SDL2)
     set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -714,8 +752,19 @@ else()
     endif()
 endif()
 
-find_package(libzip REQUIRED)
+if(NOT TARGET libzip::zip) # (ZMP web: the Emscripten configuration fetches it)
+    find_package(libzip REQUIRED)
+endif()
 list(APPEND ADDITIONAL_LIBRARY_DEPENDENCIES libzip::zip)
+
+# ZMP: zstd for the portable save states; dbghelp names the globals a state load could not restore.
+if(NOT TARGET zstd::libzstd_static) # (ZMP web: the Emscripten configuration builds it from source)
+    find_package(zstd CONFIG REQUIRED)
+endif()
+list(APPEND ADDITIONAL_LIBRARY_DEPENDENCIES $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>)
+if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    list(APPEND ADDITIONAL_LIBRARY_DEPENDENCIES dbghelp)
+endif()
 
 if(USE_ASAN)
     target_compile_options(libultraship PRIVATE -fsanitize=address)
@@ -743,6 +792,71 @@ if(USE_ASAN)
     endif()
 endif()
 
+
+if(EMSCRIPTEN)
+    # Everything in this folder is bundled into soh.data: the generated soh.o2r and the controller database are copied
+    # in before linking. Files put there by hand are bundled too (e.g. an oot.o2r, to skip the ROM screen while
+    # developing).
+    set(SHIPWEB_PRELOAD_DIR ${CMAKE_BINARY_DIR}/preload)
+    file(MAKE_DIRECTORY ${SHIPWEB_PRELOAD_DIR})
+    # ZMP web (D-238): the native build already produces soh.o2r next to the sources (GenerateSohOtr copies it there);
+    # the web build bundles that one instead of running the packer under node.
+    set(ZMP_WEB_SOH_O2R ${CMAKE_SOURCE_DIR}/soh.o2r)
+    if(NOT EXISTS ${ZMP_WEB_SOH_O2R})
+        message(FATAL_ERROR "ZMP web: ${ZMP_WEB_SOH_O2R} is missing; build the native GenerateSohOtr target first")
+    endif()
+    add_custom_command(TARGET soh PRE_LINK
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${ZMP_WEB_SOH_O2R} ${CMAKE_BINARY_DIR}/gamecontrollerdb.txt ${SHIPWEB_PRELOAD_DIR}
+        VERBATIM
+    )
+
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/web/version.js.in ${CMAKE_CURRENT_BINARY_DIR}/web/version.js @ONLY)
+    target_link_options(soh PRIVATE
+        "SHELL:--preload-file ${SHIPWEB_PRELOAD_DIR}@/"
+        "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html"
+        "SHELL:--pre-js ${CMAKE_CURRENT_BINARY_DIR}/web/version.js"
+        "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/web/zmp-web.js" # ZMP web (D-238): host page config, build hash
+        "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/web/persistence.js"
+        "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/web/rom-setup.js"
+        "-lidbfs.js"
+    )
+    # The page runs the ROM extractor (root CMakeLists) when there are no extracted assets yet.
+    add_dependencies(soh soh-extractor)
+    # (soh.o2r is read at link time by the pre-link copy; not a LINK_DEPENDS: it is a byproduct of GenerateSohOtr,
+    #  which would make ninja run the native packer)
+    set_property(TARGET soh APPEND PROPERTY LINK_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html
+        ${CMAKE_CURRENT_BINARY_DIR}/web/version.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/web/zmp-web.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/web/persistence.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/web/rom-setup.js
+    )
+
+    # These files contain giant static-data init functions (thousands of CustomMessage/std::string temporaries).
+    # With Emscripten's JS-based exception handling every call becomes an invoke_* and every temporary stays live for
+    # the cleanup pads, producing wasm functions with 7k-23k locals. V8's baseline compiler (Liftoff) needs 4-6+ GB to
+    # compile each of them, which crashes the tab with "out of memory" the first time Rando::Context::InitStaticData()
+    # runs. None of them throw or catch, so compile them without exception cleanup (calls are treated as nounwind).
+    # The hint tables are still too big after that because of the inlined CustomMessage/std::string constructors, so
+    # also disable inlining there (it's run-once init code).
+    set_source_files_properties(
+        soh/Enhancements/randomizer/3drando/hint_list.cpp
+        soh/Enhancements/randomizer/3drando/hint_list/hint_list_item.cpp
+        soh/Enhancements/randomizer/3drando/hint_list/hint_list_exclude_overworld.cpp
+        soh/Enhancements/randomizer/3drando/hint_list/hint_list_exclude_dungeon.cpp
+        PROPERTIES COMPILE_OPTIONS "-fignore-exceptions;-fno-inline"
+    )
+    set_source_files_properties(
+        soh/Enhancements/randomizer/Traps.cpp
+        soh/Enhancements/randomizer/item_list.cpp
+        soh/Enhancements/randomizer/location_list.cpp
+        soh/Enhancements/randomizer/settings.cpp
+        soh/Enhancements/randomizer/location_access/dungeons/water_temple.cpp
+        soh/Enhancements/randomizer/location_access/dungeons/fire_temple.cpp
+        PROPERTIES COMPILE_OPTIONS "-fignore-exceptions"
+    )
+endif()
 
 if(NOT CMAKE_SYSTEM_NAME MATCHES "Darwin|NintendoSwitch|CafeOS")
 INSTALL(TARGETS soh DESTINATION . COMPONENT ship)

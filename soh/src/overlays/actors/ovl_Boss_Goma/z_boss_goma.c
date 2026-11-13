@@ -1,3 +1,4 @@
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
 #include "z_boss_goma.h"
 #include "textures/boss_title_cards/object_goma.h"
 #include "objects/object_goma/object_goma.h"
@@ -781,8 +782,8 @@ void BossGoma_Encounter(BossGoma* this, PlayState* play) {
             break;
 
         case 3: // wait for the player to look at Gohma
-            if (fabsf(this->actor.projectedPos.x) < 150.0f && fabsf(this->actor.projectedPos.y) < 250.0f &&
-                this->actor.projectedPos.z < 800.0f && this->actor.projectedPos.z > 0.0f) {
+            // ZMP: looked at by any player (the original reads the one camera)
+            if (Zmp_AnyViewBox(play, &this->actor, 150.0f, 250.0f, 0.0f, 800.0f)) {
                 this->lookedAtFrames++;
                 Math_ApproachZeroF(&this->actor.speedXZ, 0.5f, 2.0f);
                 Math_ApproachS(&this->actor.world.rot.y,
@@ -1150,7 +1151,10 @@ void BossGoma_Defeated(BossGoma* this, PlayState* play) {
                     if ((fabsf(childPos.x - player->actor.world.pos.x) < 100.0f &&
                          fabsf(childPos.z - player->actor.world.pos.z) < 100.0f) ||
                         (fabsf(childPos.x - this->actor.world.pos.x) < 150.0f &&
-                         fabsf(childPos.z - this->actor.world.pos.z) < 150.0f)) {
+                         fabsf(childPos.z - this->actor.world.pos.z) < 150.0f) ||
+                        // ZMP: nor where another player stands (the warp would take it without it stepping in:
+                        // finding Z, D-099). For the first half of the tries; then only the original's rule.
+                        (i < 5000 && Zmp_OtherPlayerInBoxXZ(player, childPos.x, childPos.z, 100.0f))) {
                         childPos.x = Rand_CenteredFloat(400.0f) + -150.0f;
                         childPos.z = Rand_CenteredFloat(400.0f) + -350.0f;
                     } else {
@@ -2189,4 +2193,34 @@ void BossGoma_SpawnChildGohma(BossGoma* this, PlayState* play, s16 i) {
                        this->lastTailLimbWorldPos.y - 50.0f, this->lastTailLimbWorldPos.z, 0, i * (0x10000 / 3), 0, i);
 
     this->childrenGohmaState[i] = 1;
+}
+
+// ZMP phase 6 scenario tests (f6_gohma.py, D-170): what the bots cannot aim. "zmp_stage gohma stun": a slingshot seed
+// reaches her open eye, as BossGoma_UpdateHit takes it: on the ceiling she falls struck down; on the floor, while she
+// walks, waits or faces a Link, she lies stunned (open to the sword) for 90 ticks.
+s32 BossGoma_ZmpStage(PlayState* play, Actor* thisx, s32 what) {
+    BossGoma* this = (BossGoma*)thisx;
+
+    if ((this == NULL) || (what != 0) || (this->invincibilityFrames != 0) || (this->eyeClosedTimer != 0)) {
+        return 0;
+    }
+    if ((this->actionFunc == BossGoma_CeilingMoveToCenter) || (this->actionFunc == BossGoma_CeilingIdle) ||
+        (this->actionFunc == BossGoma_CeilingPrepareSpawnGohmas)) {
+        BossGoma_SetupFallStruckDown(this);
+        Audio_PlayActorSound2(&this->actor, NA_SE_EN_GOMA_DAM2);
+        return 1;
+    }
+    if ((this->actionFunc != BossGoma_FloorMain) && (this->actionFunc != BossGoma_FloorIdle) &&
+        (this->actionFunc != BossGoma_FloorAttackPosture) && (this->actionFunc != BossGoma_FloorPrepareAttack)) {
+        return 0;
+    }
+    Audio_PlayActorSound2(&this->actor, NA_SE_EN_GOMA_DAM2);
+    Audio_StopSfxById(NA_SE_EN_GOMA_CRY1);
+    this->invincibilityFrames = 10;
+    BossGoma_SetupFloorStunned(this);
+    this->sfxFaintTimer = 100;
+    this->framesUntilNextAction = 90;
+    this->timer = 4;
+    Actor_RequestQuakeAndRumble(&this->actor, play, 4, 0xC);
+    return 1;
 }

@@ -1,0 +1,2388 @@
+#ifdef ZMP_HARNESS
+
+// Game-thread side of the harness (PLAN.md 5.2): executes commands between frames, answers
+// waits, and overrides the port 0 pad right after the physical read.
+
+#include "Harness.h"
+#include "HarnessQueue.h"
+#include "Screenshot.h"
+#include "soh/Zmp/Test/Mutants.h"
+
+#include <chrono>
+#include <thread>
+#include <deque>
+#include <map>
+#include <filesystem>
+#include <string>
+#include <algorithm>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+#include <imgui.h>
+#include <ship/Context.h>
+#include <ship/window/Window.h>
+#include <libultraship/bridge/consolevariablebridge.h>
+#include <libultraship/libultra/controller.h>
+
+#include "soh/Zmp/Zmp.h"
+#include "soh/Zmp/ZmpLog.h"
+#include "soh/Zmp/Net/ZmpClient.h"
+#include "soh/Zmp/Sim/CVarProfile.h"
+#include "soh/Zmp/Sim/Session.h"
+#include "soh/Zmp/Sim/ZmpPlayers.h"
+#include "soh/Zmp/Net/Lockstep.h"
+#include "soh/Zmp/Net/Autosave.h"
+#include "soh/Zmp/Net/SharedGame.h"
+#include "soh/Zmp/Ui/ZmpWindow.h"
+#include "soh/Zmp/Ui/ChatBox.h"
+#include "soh/Zmp/ZmpCVars.h"
+#include "soh/Zmp/State/StateBlob.h"
+#include "soh/Zmp/State/ResourceSlots.h"
+#include "soh/Enhancements/game-interactor/GameInteractor.h"
+#include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
+
+extern "C" {
+#include <z64.h>
+#include "variables.h"
+#include "functions.h"
+#include "macros.h"
+#include "overlays/actors/ovl_En_Md/z_en_md.h"           // block 7
+#include "overlays/actors/ovl_En_Heishi1/z_en_heishi1.h" // block 7
+#include "overlays/actors/ovl_En_Du/z_en_du.h"           // block 7
+#include "overlays/actors/ovl_Boss_Goma/z_boss_goma.h"
+#include "overlays/actors/ovl_Boss_Dodongo/z_boss_dodongo.h"     // ZMP phase 6 scenario tests
+#include "overlays/actors/ovl_Boss_Va/z_boss_va.h"               // ZMP phase 6 scenario tests
+#include "overlays/actors/ovl_En_Ru1/z_en_ru1.h"                 // ZMP phase 6 scenario tests
+#include "overlays/actors/ovl_Boss_Ganondrof/z_boss_ganondrof.h" // ZMP phase 6 scenario tests
+#include "overlays/actors/ovl_En_fHG/z_en_fhg.h"                 // ZMP phase 6 scenario tests
+#include "overlays/actors/ovl_En_Fhg_Fire/z_en_fhg_fire.h"       // ZMP phase 6 scenario tests
+#include "overlays/actors/ovl_Boss_Fd/z_boss_fd.h"               // ZMP phase 6 scenario tests
+#include "overlays/actors/ovl_Boss_Fd2/z_boss_fd2.h"             // ZMP phase 6 scenario tests
+#include "overlays/actors/ovl_Boss_Mo/z_boss_mo.h"               // ZMP phase 6 scenario tests
+#include "overlays/actors/ovl_En_Rd/z_en_rd.h"                   // ZMP phase 6 scenario tests (D-158)
+#include "overlays/actors/ovl_Boss_Sst/z_boss_sst.h"             // ZMP phase 6 scenario tests
+#include "overlays/actors/ovl_Bg_Haka_Megane/z_bg_haka_megane.h" // ZMP phase 6 scenario tests
+#include "overlays/actors/ovl_Boss_Ganon/z_boss_ganon.h"         // ZMP phase 6 scenario tests (f6_ganon.py)
+#include "overlays/actors/ovl_Boss_Ganon2/z_boss_ganon2.h"       // ZMP phase 6 scenario tests (f6_ganon.py)
+#include "overlays/actors/ovl_Obj_Syokudai/z_obj_syokudai.h"     // ZMP phase 6 (f6_castle_rooms.py)
+#include "overlays/actors/ovl_Mir_Ray/z_mir_ray.h"               // R2 (D-212)
+#include "overlays/actors/ovl_En_Ossan/z_en_ossan.h"
+#include "overlays/actors/ovl_En_Arrow/z_en_arrow.h" // D-216
+#include "overlays/actors/ovl_En_GirlA/z_en_girla.h"
+#include "overlays/actors/ovl_Bg_Mori_Hineri/z_bg_mori_hineri.h"         // salas 2026-10-18 (F7)
+#include "overlays/actors/ovl_Bg_Mori_Kaitenkabe/z_bg_mori_kaitenkabe.h" // salas 2026-10-18 (F8)
+#include "overlays/actors/ovl_Bg_Mori_Elevator/z_bg_mori_elevator.h"     // salas 2026-10-18 (F10)
+#include "overlays/actors/ovl_En_Horse/z_en_horse.h"                     // D-208 (R4, Epona)
+#include "overlays/actors/ovl_En_Zl4/z_en_zl4.h"                         // D-219 (Zelda's talk)
+#include "overlays/actors/ovl_Boss_Tw/z_boss_tw.h"                       // D-222 (Twinrova's shield charge)
+#include "overlays/actors/ovl_Obj_Lightswitch/z_obj_lightswitch.h"       // D-225 (the Spirit Temple's suns)
+extern u16 gTimeSpeed;
+void BossGanondrof_Stunned(BossGanondrof* self, PlayState* play); // (phase 6 tests: which action it runs)
+void BossGanondrof_Charge(BossGanondrof* self, PlayState* play);
+void BossFd_Wait(BossFd* self, PlayState* play); // (phase 6 tests: Volvagia's actions)
+void BossFd2_Emerge(BossFd2* self, PlayState* play);
+void BossFd2_Idle(BossFd2* self, PlayState* play);
+void BossFd2_Burrow(BossFd2* self, PlayState* play);
+void BossFd2_BreatheFire(BossFd2* self, PlayState* play);
+void BossFd2_ClawSwipe(BossFd2* self, PlayState* play);
+void BossFd2_Vulnerable(BossFd2* self, PlayState* play);
+void BossFd2_Damaged(BossFd2* self, PlayState* play);
+void BossFd2_Death(BossFd2* self, PlayState* play);
+void BossFd2_Wait(BossFd2* self, PlayState* play);
+extern u8 sAudioExtraFilter;
+extern PlayState* gPlayState;
+void FileChoose_Main(GameState* thisx);
+void Opening_Main(GameState* thisx);
+void Select_Main(GameState* thisx);
+void Title_Main(GameState* thisx);
+void Play_Main(GameState* thisx);
+void Play_Init(GameState* thisx);
+}
+
+using json = nlohmann::json;
+
+#ifdef _WIN32
+extern "C" const char __ImageBase; // start of the executable image (MSVC linker symbol)
+// A code address as an offset into the executable, the same in every process of the same build (D-016).
+static uint64_t CodeOffset(const void* fn) {
+    return (uint64_t)((uintptr_t)fn - (uintptr_t)&__ImageBase);
+}
+static uint64_t ImageBase() {
+    return (uint64_t)(uintptr_t)&__ImageBase;
+}
+#else
+// ZMP web (D-242): a wasm function pointer is already an index into the function table, stable per build.
+static uint64_t CodeOffset(const void* fn) {
+    return (uint64_t)(uintptr_t)fn;
+}
+static uint64_t ImageBase() {
+    return 0;
+}
+#endif
+
+uint32_t Zmp_RandOutsideTickCount(void); // Zmp.cpp (D-192)
+
+namespace Zmp::Harness {
+
+namespace {
+float sFrameIntervalMs = 0.0f;
+float sFrameIntervalMaxMs = 0.0f;
+// Phase 5b ("nobody waits for anybody"): wall time between two consecutive logic ticks, since the last reset.
+std::vector<float> sTickGaps;
+uint32_t sGapLastTick = 0;
+std::chrono::steady_clock::time_point sGapLastAt;
+bool sGapValid = false;
+int sGapSettled = 0;
+float sGateWaitMaxMs = 0.0f; // longest time the tick gate stayed closed (waiting for the others), settled ticks only
+
+struct PadStep {
+    uint32_t buttons = 0;
+    int8_t stickX = 0;
+    int8_t stickY = 0;
+    int8_t rStickX = 0;
+    int8_t rStickY = 0;
+    int32_t frames = 1; // <= 0 means hold until input.release
+};
+
+enum class WaitKind { Tick, Stable, Scene, GameState, SimTick, ReplayEnd };
+
+struct Wait {
+    WaitKind kind;
+    RequestPtr req;
+    uint32_t targetTick = 0;
+    int scene = -1;
+    std::string gameState;
+    uint32_t satisfiedFrames = 0;
+    std::chrono::steady_clock::time_point deadline;
+};
+
+uint32_t sFrame = 0;
+std::deque<PadStep> sScript;
+int32_t sStepLeft = 0;
+bool sStepRead = false; // the local menu logic has read the pad with the current step (AdvanceScript)
+int sWaitedForRead = 0; // inputs sent while the current step waited for that read
+bool sScriptActive = false;
+RequestPtr sScriptReq; // answered when the script ends (null for input.set)
+uint32_t sInjectedFrames = 0;
+std::vector<Wait> sWaits;
+bool sQuitRequested = false;
+
+// A capture at its own size (fast suite): the window was resized for it; it is taken a few frames later (the swap
+// chain has the new size by then) and the window goes back to its tile.
+struct PendingShot {
+    RequestPtr req;
+    std::string path;
+    int frames = 0;
+    uint32_t afterTick = 0; // not before this simulation tick has been drawn (0: as soon as the window is ready)
+    CaptureRestore restore;
+    int frameId = 0; // the frame asked for (D-102): taken when the renderer presents it
+};
+std::vector<PendingShot> sShots;
+
+void TakeShot(const RequestPtr& req, const std::string& path) {
+    int w = 0, h = 0;
+    std::string info;
+    if (CaptureGameWindow(path, &w, &h, &info)) {
+        req->Reply({ { "ok", true }, { "path", path }, { "width", w }, { "height", h }, { "method", info } });
+    } else {
+        req->Reply({ { "ok", false }, { "error", info } });
+    }
+}
+
+std::string GameStateName() {
+    if (gGameState == nullptr) {
+        return "none";
+    }
+    // gGameState->init holds the *next* state's init (SET_NEXT_GAMESTATE); each state's
+    // init stores its own main function, so identify the state by `main`.
+    auto main = gGameState->main;
+    if (main == Play_Main) {
+        return "play";
+    }
+    if (main == FileChoose_Main) {
+        return "file_select";
+    }
+    if (main == Title_Main) {
+        return "title";
+    }
+    if (main == Opening_Main) {
+        return "opening";
+    }
+    if (main == Select_Main) {
+        return "map_select";
+    }
+    return "other";
+}
+
+bool InPlay() {
+    return gGameState != nullptr && gGameState->main == Play_Main && gPlayState != nullptr;
+}
+
+bool SceneReady(int scene) {
+    if (!InPlay() || gPlayState->sceneNum != scene) {
+        return false;
+    }
+    if (gPlayState->transitionTrigger != TRANS_TRIGGER_OFF || gPlayState->transitionMode != TRANS_MODE_OFF) {
+        return false;
+    }
+    return GET_PLAYER(gPlayState) != nullptr;
+}
+
+json Vec3(const Vec3f& v) {
+    return json::array({ v.x, v.y, v.z });
+}
+
+json Rot3(const Vec3s& r) {
+    return json::array({ r.x, r.y, r.z });
+}
+
+PadStep ParsePad(const json& j) {
+    PadStep p;
+    p.buttons = j.value("buttons", 0u);
+    p.stickX = (int8_t)j.value("stick_x", 0);
+    p.stickY = (int8_t)j.value("stick_y", 0);
+    p.rStickX = (int8_t)j.value("rstick_x", 0);
+    p.rStickY = (int8_t)j.value("rstick_y", 0);
+    p.frames = j.value("frames", 1);
+    return p;
+}
+
+void EndScript(bool completed) {
+    if (sScriptReq) {
+        sScriptReq->Reply({ { "ok", completed },
+                            { "tick", sFrame },
+                            { "injected_frames", sInjectedFrames },
+                            { "error", completed ? "" : "released" } });
+        sScriptReq.reset();
+    }
+    sScript.clear();
+    sStepLeft = 0;
+    sScriptActive = false;
+}
+
+void StartScript(std::deque<PadStep> steps, RequestPtr req) {
+    EndScript(false);
+    sScript = std::move(steps);
+    sScriptReq = std::move(req);
+    sInjectedFrames = 0;
+    sScriptActive = !sScript.empty();
+    sStepLeft = sScriptActive ? sScript.front().frames : 0;
+    sStepRead = false;
+    sWaitedForRead = 0;
+    if (!sScriptActive && sScriptReq) {
+        EndScript(true);
+    }
+}
+
+// (control switch while a failure of this mechanism is investigated: 0 = the script advances with the pad read, as
+// before the fast suite)
+bool ScriptBySend() {
+    return CVarGetInteger(CVAR_ZMP("Test.ScriptBySend"), 1) != 0;
+}
+
+// In a group the script's pad is this player's input to the group, except while its own pause menu is open: the menu
+// reads the pad itself, tick by tick, and a step used up by an input sent (several can go out between two ticks when
+// the PC is busy) would never be seen by it (a button press of two steps was lost: the fast suite, D-083).
+bool ScriptGoesToTheGroup() {
+    auto st = Zmp::Lockstep::GetStatus();
+    return st.phase == Zmp::Lockstep::Phase::Running && !st.localInputBlocked;
+}
+
+// A step of the script is not over until this player's own menu logic has read the pad with it. The pause menu opens
+// and is driven by the local pad, read once per tick; the steps advance with the inputs sent, and when the PC is busy
+// two inputs go out between two ticks: a press of two steps was over before any tick had seen it, and the menu did not
+// open (the fast suite, D-083). A step waits for that read for at most a second of inputs (a game that is not playing
+// ticks reads nothing).
+void AdvanceScript() {
+    const PadStep& step = sScript.front();
+    sInjectedFrames++;
+    if (step.frames <= 0) {
+        return; // hold
+    }
+    if (sStepLeft <= 1 && !sStepRead && ScriptBySend() && ScriptGoesToTheGroup() && sWaitedForRead < 20) {
+        sWaitedForRead++;
+        return;
+    }
+    if (--sStepLeft <= 0) {
+        sStepRead = false;
+        sWaitedForRead = 0;
+        sScript.pop_front();
+        if (sScript.empty()) {
+            EndScript(true);
+        } else {
+            sStepLeft = sScript.front().frames;
+        }
+    }
+}
+
+// Called once per frame with the physical pads already read.
+void ApplyScriptInput(OSContPad* pads) {
+    if (!sScriptActive) {
+        return;
+    }
+    const PadStep& step = sScript.front();
+    pads[0].button = (CONTROLLERBUTTONS_T)step.buttons;
+    pads[0].stick_x = step.stickX;
+    pads[0].stick_y = step.stickY;
+    pads[0].right_stick_x = step.rStickX;
+    pads[0].right_stick_y = step.rStickY;
+    pads[0].gyro_x = 0;
+    pads[0].gyro_y = 0;
+    pads[0].err_no = 0;
+    if (ScriptBySend() && ScriptGoesToTheGroup()) {
+        return; // in a group the script advances with each input sent (ScriptPadForSend)
+    }
+    sInjectedFrames++;
+    if (step.frames <= 0) {
+        return; // hold
+    }
+    if (--sStepLeft <= 0) {
+        sStepRead = false;
+        sWaitedForRead = 0;
+        sScript.pop_front();
+        if (sScript.empty()) {
+            // The pad of this frame is the last one; the game update that follows uses it.
+            EndScript(true);
+        } else {
+            sStepLeft = sScript.front().frames;
+        }
+    }
+}
+
+// The id and params of an actor a Link has as its parent, looked up among the scene's actors (the pointer is compared,
+// never followed: one that is not there any more gives -1).
+json ParentJson(const Actor* parent) {
+    if (parent == nullptr) {
+        return nullptr;
+    }
+    for (int cat = 0; cat < ACTORCAT_MAX; cat++) {
+        for (Actor* x = gPlayState->actorCtx.actorLists[cat].head; x != nullptr; x = x->next) {
+            if (x == parent) {
+                return { { "id", x->id }, { "params", x->params } };
+            }
+        }
+    }
+    return -1;
+}
+
+json PlayerJson(Player* player, int slot = 0) {
+    Actor* a = &player->actor;
+    // Multiplayer simulation: the slot's own health and camera (live when it is the context player).
+    bool multi = Zmp_MultiActive() && slot >= 0;
+    bool live = !multi || slot == gZmpSim.ctx;
+    const Camera* cam = live ? &gPlayState->mainCamera : &gZmpSim.slots[slot].camera;
+    const TargetContext* target = live ? &gPlayState->actorCtx.targetCtx : &gZmpSim.slots[slot].target;
+    int health = multi ? Zmp::Players::SlotHealth(slot) : gSaveContext.health;
+    // Per-player block (phase 3): the slot's own values, live in the save context when it is the context.
+    ZmpPlayerBlock blk{};
+    if (multi) {
+        blk = Zmp::Players::SlotBlock(slot);
+    } else {
+        blk.magic = gSaveContext.magic;
+        blk.equips = gSaveContext.equips;
+        memcpy(blk.ammo, gSaveContext.inventory.ammo, sizeof(blk.ammo));
+        for (int i = 0; i < 4; i++) {
+            blk.bottles[i] = gSaveContext.inventory.items[SLOT_BOTTLE_1 + i];
+        }
+        memcpy(blk.buttonStatus, gSaveContext.buttonStatus, sizeof(blk.buttonStatus));
+    }
+    json eq = json::object();
+    eq["button_items"] = json::array();
+    eq["c_slots"] = json::array();
+    for (int i = 0; i < 8; i++) {
+        eq["button_items"].push_back(blk.equips.buttonItems[i]);
+    }
+    for (int i = 0; i < 7; i++) {
+        eq["c_slots"].push_back(blk.equips.cButtonSlots[i]);
+    }
+    eq["equipment"] = blk.equips.equipment;
+    json ammo = json::array();
+    for (int i = 0; i < 16; i++) {
+        ammo.push_back(blk.ammo[i]);
+    }
+    json bottles = json::array();
+    for (int i = 0; i < 4; i++) {
+        bottles.push_back(blk.bottles[i]);
+    }
+    bool downed = multi && Zmp::Players::SlotDowned(slot);
+    int spectate = multi ? Zmp::Players::SlotSpectate(slot) : -1;
+    // (phase 6, finding AI: what the floor under this Link is; -1 with no floor)
+    json floor = { { "type", -1 }, { "property", -1 }, { "exit", -1 }, { "damage", -1 } };
+    if (a->floorPoly != nullptr) {
+        CollisionContext* col = &gPlayState->colCtx;
+        floor = { { "type", SurfaceType_GetFloorType(col, a->floorPoly, a->floorBgId) },
+                  { "property", func_80041EA4(col, a->floorPoly, a->floorBgId) },
+                  { "exit", SurfaceType_GetSceneExitIndex(col, a->floorPoly, a->floorBgId) },
+                  { "damage", SurfaceType_IsWallDamage(col, a->floorPoly, a->floorBgId) },
+                  { "bg", a->floorBgId } }; // (50: the scene; else the actor whose collision it stands on)
+    }
+    return {
+        { "ok", true },
+        { "index", slot },
+        { "pos", Vec3(a->world.pos) },
+        { "rot", Rot3(a->world.rot) },
+        { "shape_rot", Rot3(a->shape.rot) },
+        { "yaw", player->yaw },
+        { "speed", player->linearVelocity },
+        { "health", health },
+        { "health_capacity", gSaveContext.healthCapacity },
+        { "magic", blk.magic },
+        { "magic_capacity", gSaveContext.magicCapacity },
+        { "rupees", gSaveContext.rupees },
+        { "equips", eq },
+        { "ammo", ammo },
+        { "bottles", bottles },
+        { "items", json(std::vector<int>(gSaveContext.inventory.items, gSaveContext.inventory.items + 24)) },
+        { "boots", player->currentBoots },
+        { "tunic", player->currentTunic },
+        { "revive_progress", multi ? Zmp::Players::SlotReviveProgress(slot) : 0 },
+        { "reviver", multi ? Zmp::Players::SlotReviver(slot) : -1 },
+        { "game_over_state", gPlayState->gameOverCtx.state },
+        { "state_flags", json::array({ player->stateFlags1, player->stateFlags2, player->stateFlags3 }) },
+        { "room", a->room },
+        { "cur_room", gPlayState->roomCtx.curRoom.num },
+        { "age", gSaveContext.linkAge == LINK_AGE_CHILD ? "child" : "adult" },
+        { "downed", downed },
+        { "away", multi && slot >= 0 && slot < ZMP_MAX_PLAYERS ? gZmpSim.slots[slot].away != 0 : false }, // D-117
+        { "camera",
+          { { "eye", Vec3(cam->eye) },
+            { "at", Vec3(cam->at) },
+            { "setting", cam->setting },
+            { "mode", cam->mode },
+            { "data_idx", cam->camDataIdx } } }, // (block 7: the courtyard guards watch by it)
+        { "focus_actor", player->focusActor != nullptr ? json(player->focusActor->id) : json(nullptr) },
+        // (what Navi points at for this player: a Z press locks on to it instead of starting the parallel camera)
+        { "navi_pointed", target->arrowPointedActor != nullptr ? json(target->arrowPointedActor->id) : json(nullptr) },
+        { "action_offset", CodeOffset((const void*)player->actionFunc) },
+        { "bg_flags", a->bgCheckFlags },
+        { "floor_y", a->floorHeight },
+        { "floor", floor },
+        { "spectating", spectate >= 0 ? json(spectate) : json(nullptr) },
+        { "pause_local", Zmp::Pause::State() },
+        { "pause_save_stage", Zmp::Pause::SaveStage() },
+        { "active_cam", multi ? Zmp::Players::SlotActiveCam(slot) : gPlayState->activeCamera },
+        // (diagnosis: the buttons the simulation applied to this slot in its last tick)
+        { "sim_buttons", multi ? (uint32_t)gZmpSim.slots[slot].input.cur.button : 0u },
+        { "sim_stick", json::array({ multi ? (int)gZmpSim.slots[slot].input.cur.stick_x : 0,
+                                     multi ? (int)gZmpSim.slots[slot].input.cur.stick_y : 0 }) },
+        { "cs_action", player->csAction },
+        // (U1, D-142: this player's item buttons, 0 on and 0xFF off: B, C-left, C-down, C-right, A, D-pad)
+        { "button_status", json(std::vector<int>(blk.buttonStatus, blk.buttonStatus + 9)) },
+        // (T3, D-146: this player's Lens of Truth is on)
+        { "lens_active", multi ? Zmp::Players::SlotLens(slot) : (bool)gPlayState->actorCtx.lensActive },
+        // (diagnosis, finding AG: where this Link's action and its animation are)
+        { "anim",
+          { { "frame", player->skelAnime.curFrame },
+            { "end", player->skelAnime.endFrame },
+            { "speed", player->skelAnime.playSpeed },
+            { "mode", player->skelAnime.mode } } },
+        { "action_vars", json::array({ player->av1.actionVar1, player->av2.actionVar2 }) },
+        { "get_item",
+          json::array({ player->getItemId, player->getItemEntry.objectId, player->getItemEntry.getItemId }) },
+        { "talk_actor", player->talkActor != nullptr ? json(player->talkActor->id) : json(nullptr) },
+        { "exchange_item", player->exchangeItemId },
+        { "heat_seconds", multi ? Zmp::Players::SlotHeatSeconds(slot) : -1 },
+        // (phase 6, Volvagia: its fire sets a Link on fire; a hit leaves it invincible for a while)
+        { "burning", player->bodyIsBurning != 0 },
+        // (phase 6, D-134: what holds this Link, by the actor's id; -1 a parent that is no actor of the scene any more)
+        { "parent", ParentJson(player->actor.parent) },
+        { "invincible", player->invincibilityTimer },
+        { "zmp_room", multi ? Zmp::Players::SlotRoom(slot) : gPlayState->roomCtx.curRoom.num },
+        { "timer_state", gSaveContext.timerState },
+        // (E1, D-164: the countdown of the escape; shared, the same for every slot)
+        { "sub_timer_seconds", gSaveContext.subTimerSeconds },
+        { "sub_timer_state", gSaveContext.subTimerState },
+        { "tick", sFrame },
+    };
+}
+
+// Block 9 (bots that walk, D-194): the scene collision's polygons with an exit index ("query.exits") or a wall a Link
+// climbs ("query.climbables"), grouped one per opening (a doorway or a vine wall is several triangles). Read only.
+struct PolyGroup {
+    int key = 0;
+    int polys = 0;
+    float sum[3] = { 0, 0, 0 };
+    float nrm[3] = { 0, 0, 0 };
+    float lo[3] = { 1e9f, 1e9f, 1e9f };
+    float hi[3] = { -1e9f, -1e9f, -1e9f };
+};
+
+static std::vector<PolyGroup> GroupScenePolys(bool climb) {
+    std::vector<PolyGroup> out;
+    CollisionHeader* h = gPlayState->colCtx.colHeader;
+    if (h == nullptr || h->polyList == nullptr || h->vtxList == nullptr) {
+        return out;
+    }
+    for (int i = 0; i < h->numPolygons; i++) {
+        CollisionPoly* poly = &h->polyList[i];
+        int key = 0;
+        if (climb) {
+            s32 f = SurfaceType_GetWallFlags(&gPlayState->colCtx, poly, BGCHECK_SCENE);
+            key = f & (WALL_FLAG_LADDER | WALL_FLAG_LADDER_TOP | WALL_FLAG_CLIMBABLE | WALL_FLAG_CRAWLSPACE);
+        } else {
+            key = SurfaceType_GetSceneExitIndex(&gPlayState->colCtx, poly, BGCHECK_SCENE);
+        }
+        if (key == 0) {
+            continue;
+        }
+        float c[3] = { 0, 0, 0 };
+        float lo[3] = { 1e9f, 1e9f, 1e9f };
+        float hi[3] = { -1e9f, -1e9f, -1e9f };
+        for (int v = 0; v < 3; v++) {
+            const Vec3s& q = h->vtxList[COLPOLY_VTX_INDEX(poly->vtxData[v])];
+            float w[3] = { (float)q.x, (float)q.y, (float)q.z };
+            for (int a = 0; a < 3; a++) {
+                c[a] += w[a] / 3.0f;
+                lo[a] = std::min(lo[a], w[a]);
+                hi[a] = std::max(hi[a], w[a]);
+            }
+        }
+        float n[3] = { COLPOLY_GET_NORMAL(poly->normal.x), COLPOLY_GET_NORMAL(poly->normal.y),
+                       COLPOLY_GET_NORMAL(poly->normal.z) };
+        PolyGroup* g = nullptr;
+        for (auto& e : out) {
+            // (the same key, facing the same way (the two faces of a crawl hole are two groups) and touching the
+            // group's box, with a margin: one opening)
+            float dot = e.nrm[0] * n[0] + e.nrm[1] * n[1] + e.nrm[2] * n[2];
+            if (e.key == key && dot > 0.0f && c[0] > e.lo[0] - 60 && c[0] < e.hi[0] + 60 && c[1] > e.lo[1] - 60 &&
+                c[1] < e.hi[1] + 60 && c[2] > e.lo[2] - 60 && c[2] < e.hi[2] + 60) {
+                g = &e;
+                break;
+            }
+        }
+        if (g == nullptr) {
+            out.push_back(PolyGroup());
+            g = &out.back();
+            g->key = key;
+        }
+        g->polys++;
+        for (int a = 0; a < 3; a++) {
+            g->sum[a] += c[a];
+            g->nrm[a] += n[a];
+            g->lo[a] = std::min(g->lo[a], lo[a]);
+            g->hi[a] = std::max(g->hi[a], hi[a]);
+        }
+    }
+    return out;
+}
+
+static json PolyGroupJson(const PolyGroup& g) {
+    float n = (float)g.polys;
+    float len = sqrtf(g.nrm[0] * g.nrm[0] + g.nrm[1] * g.nrm[1] + g.nrm[2] * g.nrm[2]);
+    if (len < 1e-3f) {
+        len = 1.0f;
+    }
+    return { { "pos", { lroundf(g.sum[0] / n), lroundf(g.sum[1] / n), lroundf(g.sum[2] / n) } },
+             { "min", { lroundf(g.lo[0]), lroundf(g.lo[1]), lroundf(g.lo[2]) } },
+             { "max", { lroundf(g.hi[0]), lroundf(g.hi[1]), lroundf(g.hi[2]) } },
+             { "normal", { g.nrm[0] / len, g.nrm[1] / len, g.nrm[2] / len } },
+             { "floor", g.nrm[1] / len > 0.5f },
+             { "polys", g.polys } };
+}
+
+json ActorsJson(const json& cmd) {
+    int onlyCat = cmd.value("category", -1);
+    int onlyId = cmd.value("actor_id", -1); // "id" is the request id
+    json list = json::array();
+    for (int cat = 0; cat < ACTORCAT_MAX; cat++) {
+        if (onlyCat >= 0 && cat != onlyCat) {
+            continue;
+        }
+        for (Actor* a = gPlayState->actorCtx.actorLists[cat].head; a != nullptr; a = a->next) {
+            if (onlyId >= 0 && a->id != onlyId) {
+                continue;
+            }
+            list.push_back({
+                { "id", a->id },
+                { "category", a->category },
+                { "params", a->params },
+                { "pos", Vec3(a->world.pos) },
+                { "rot", Rot3(a->world.rot) },
+                { "shape_rot", Rot3(a->shape.rot) }, // (phase 6: a skull's jaw, a turning platform)
+                { "health", a->colChkInfo.health },
+                { "room", a->room },
+                { "freeze_timer", a->freezeTimer },
+                { "proj", Vec3(a->projectedPos) },
+                { "home", Vec3(a->home.pos) },           // (prep 5: the adult King Zora measures from it)
+                { "drawn", a->draw != nullptr ? 1 : 0 }, // (D-213: a Poe sister that is not out has no draw)
+                // The player its logic acts on and the yaw to that player computed by the simulation this tick.
+                { "target_slot", Zmp::Players::ActorTargetSlot(a) },
+                { "yaw_to_player", a->yawTowardsPlayer },
+                { "dist_to_player", a->xzDistToPlayer },
+            });
+            if (a->id == ACTOR_EN_ARROW) {
+                // D-216: 1 + the slot of the Link who shot it (0: not a player's), its action (an offset in the
+                // executable) and its timer.
+                const EnArrow* ar = (const EnArrow*)a;
+                list.back()["arrow_owner"] = ar->zmpOwner;
+                list.back()["arrow_action"] = CodeOffset((const void*)ar->actionFunc);
+                list.back()["arrow_timer"] = ar->timer;
+            }
+            if (a->id == ACTOR_EN_OSSAN) {
+                // Phase 5 tests (shop): the shopkeeper's state and the shelf slot under the cursor.
+                const EnOssan* o = (const EnOssan*)a;
+                list.back()["ossan_state"] = o->stateFlag;
+                list.back()["ossan_cursor"] = o->cursorIndex;
+                const EnGirlA* sel = o->cursorIndex < 8 ? o->shelfSlots[o->cursorIndex] : nullptr;
+                list.back()["ossan_item_price"] = sel != nullptr ? sel->basePrice : -1;
+                list.back()["ossan_item_params"] = sel != nullptr ? sel->actor.params : -1;
+            }
+            if (a->id == ACTOR_BOSS_GOMA) {
+                // Tests of phase 4 (Gohma in co-op): its state machine and its children.
+                const BossGoma* g = (const BossGoma*)a;
+                list.back()["goma_action"] = CodeOffset((const void*)g->actionFunc);
+                list.back()["goma_state"] = g->actionState;
+                list.back()["goma_timer"] = g->timer;
+                list.back()["goma_children"] = { g->childrenGohmaState[0], g->childrenGohmaState[1],
+                                                 g->childrenGohmaState[2] };
+            }
+            if (a->id == ACTOR_BOSS_DODONGO) {
+                // Phase 6 scenario tests (King Dodongo with five players): its own health counter, its cutscene state
+                // and its action (an offset in the executable: the same on every machine of one build).
+                const BossDodongo* d = (const BossDodongo*)a;
+                list.back()["kd_health"] = d->health;
+                list.back()["kd_cs_state"] = d->csState;
+                list.back()["kd_action"] = CodeOffset((const void*)d->actionFunc);
+                list.back()["kd_timer"] = d->unk_1DA;         // the death cutscene counts it 1000 down to 600
+                list.back()["kd_scene"] = d->unk_1BC;         // 0 fighting (colliders on), 1 or 2 in a cutscene
+                list.back()["kd_inhaling"] = d->unk_1E2;      // 1 while it breathes in (a bomb at its mouth is eaten)
+                list.back()["kd_down"] = d->unk_1BE;          // 10 while it lies stunned and the sword hurts it
+                list.back()["kd_camera"] = d->cutsceneCamera; // its own sub camera (0 none)
+                list.back()["kd_mouth"] = Vec3(d->mouthPos);
+            }
+            if (a->id == ACTOR_EN_RU1) {
+                // Phase 6 scenario tests (Ruto in Jabu-Jabu): her action and who carries her. The parent pointer is
+                // compared with the players' pointers and never followed (a carrier that left the group would leave a
+                // freed pointer here: finding J1 of reports/fase6/INVENTARIO.md).
+                const EnRu1* r = (const EnRu1*)a;
+                int carrier = -2; // -2 nobody, -1 something that is not a present player
+                if (a->parent != nullptr) {
+                    carrier = -1;
+                    for (int k = 0; k < ZMP_MAX_PLAYERS; k++) {
+                        if (Zmp::Players::IsPresent(k) && (const Actor*)Zmp::Players::SlotPlayer(k) == a->parent) {
+                            carrier = k;
+                        }
+                    }
+                }
+                list.back()["ru1_action"] = r->action;
+                list.back()["ru1_carrier"] = carrier;
+                list.back()["ru1_room2"] = r->roomNum2;
+            }
+            if (a->id == ACTOR_EN_MD || a->id == ACTOR_EN_KO || a->id == ACTOR_EN_KZ) { // (prep 6: King Zora too)
+                // D-206: where each player's own picture shows the actor's focus (the talk offer's "on screen",
+                // 320x240), as the simulation computes it, and the canonical (anchor's) picture.
+                json sc = json::array();
+                for (int k = -1; k < ZMP_MAX_PLAYERS; k++) {
+                    Vec3f pp;
+                    f32 w;
+                    MtxF vp = gPlayState->viewProjectionMtxF;
+                    if (k >= 0) {
+                        Zmp_SlotViewProjection(gPlayState, k, &vp);
+                    }
+                    SkinMatrix_Vec3fMtxFMultXYZW(&vp, &a->focus.pos, &pp, &w);
+                    w = (w < 1.0f) ? 1.0f : 1.0f / w;
+                    sc.push_back(
+                        json::array({ (int)(pp.x * w * 160.0f + 160.0f), (int)(pp.y * w * -120.0f + 120.0f) }));
+                }
+                list.back()["screen_by_slot"] = sc; // (first: the canonical picture; then slots 0..5)
+                list.back()["focus"] = Vec3(a->focus.pos);
+            }
+            if (a->id == ACTOR_EN_MD) {
+                // Block 7 (S7-D, Mido): his action (an offset in the executable) and his conversation state.
+                const EnMd* m = (const EnMd*)a;
+                list.back()["md_action"] = CodeOffset((const void*)m->actionFunc);
+                list.back()["talk_state"] = m->interactInfo.talkState;
+                list.back()["text_id"] = a->textId;
+            }
+            if (a->id == ACTOR_BOSS_TW) {
+                // D-222 (row 3 of Twinrova): the Mirror Shield's charges and the ice freeze, statics of the fight.
+                s32 fire = 0, ice = 0, freeze = 0;
+                BossTw_ZmpCharges(&fire, &ice, &freeze);
+                list.back()["tw_fire_charge"] = fire;
+                list.back()["tw_ice_charge"] = ice;
+                list.back()["tw_freeze_state"] = freeze;
+                list.back()["tw_cs_state1"] = ((const BossTw*)a)->csState1;
+            }
+            if (a->id == ACTOR_EN_ZL4) {
+                // D-219: Zelda's talk in the courtyard (her scripted conversation, before and after the vision).
+                const EnZl4* z = (const EnZl4*)a;
+                list.back()["zl4_cs_state"] = z->csState;
+                list.back()["zl4_talk_state"] = z->talkState;
+                list.back()["zl4_talk_timer2"] = z->talkTimer2;
+            }
+            if (a->id == ACTOR_EN_HEISHI1) {
+                // Block 7 (S7-C, courtyard guards): their route and whether they saw a Link.
+                const EnHeishi1* h = (const EnHeishi1*)a;
+                list.back()["heishi_type"] = h->type;
+                list.back()["heishi_path"] = h->path;
+                list.back()["heishi_detected"] = h->linkDetected;
+                list.back()["heishi_action"] = CodeOffset((const void*)h->actionFunc);
+            }
+            if (a->id == ACTOR_EN_DU) {
+                // Block 7 (S7-A, V8, D-177): Darunia's action and the player he attends (-1: the nearest).
+                const EnDu* d = (const EnDu*)a;
+                list.back()["du_action"] = CodeOffset((const void*)d->actionFunc);
+                list.back()["du_owner"] = d->zmpOwner - 1;
+                list.back()["talk_state"] = d->interactInfo.talkState;
+            }
+            if (a->id == ACTOR_DOOR_WARP1) {
+                // Phase 6 (B1): Ruto's warp talks with her through this state (0 not ready ... 5 warping), and the
+                // player the blue warps act on while one floats in one (-1 nobody).
+                list.back()["warp_ruto_state"] = ((const DoorWarp1*)a)->rutoWarpState;
+                list.back()["warp_owner"] = gZmpSim.warpOwner;
+            }
+            if (a->id == ACTOR_BOSS_VA) {
+                // Phase 6 scenario tests (Barinade with five players): every part is a Boss_Va (params: body -1,
+                // supports 0-2, zappers 3-5, Bari 6-15, stumps 16-18, door 19).
+                const BossVa* v = (const BossVa*)a;
+                list.back()["va_dead"] = v->isDead;
+                list.back()["va_on_ceiling"] = v->onCeiling;
+                list.back()["va_timer"] = v->timer;
+                list.back()["va_invincible"] = v->invincibilityTimer;
+                list.back()["va_action"] = CodeOffset((const void*)v->actionFunc);
+                if (a->params == BOSSVA_BODY) {
+                    s32 st[6];
+                    BossVa_ZmpDebug(st); // the fight's progress: statics of the overlay
+                    list.back()["va_fight_phase"] = st[0];
+                    list.back()["va_cs_state"] = st[1];
+                    list.back()["va_phase4_hp"] = st[2];
+                    list.back()["va_body_state"] = st[3];
+                    list.back()["va_y_offset"] = v->actor.shape.yOffset;
+                    list.back()["home"] = Vec3(v->actor.home.pos);
+                }
+            }
+            if (a->id == ACTOR_BOSS_GANON && a->params < 0x64) {
+                // f6_ganon.py: Ganondorf. What he does (BossGanon_ZmpAction), his cutscene and the ball's state.
+                const BossGanon* g = (const BossGanon*)a;
+                list.back()["gdf_action"] = BossGanon_ZmpAction(a);
+                list.back()["gdf_cs_state"] = g->csState;
+                list.back()["gdf_ball_state"] = g->unk_1C2;
+                list.back()["gdf_health"] = (s8)a->colChkInfo.health;
+            }
+            if (a->id == ACTOR_BOSS_GANON2) {
+                // f6_ganon.py: Ganon (BossGanon2_ZmpInfo): his cutscene, what he does, Zelda's sword, his head.
+                s32 info[6];
+                Vec3f head;
+                Vec3f sword;
+                BossGanon2_ZmpInfo(a, info, &head, &sword);
+                list.back()["ganon_cs_state"] = info[0];
+                list.back()["ganon_action"] = info[1];
+                list.back()["ganon_health"] = info[2];
+                list.back()["ganon_sword"] = info[3];
+                list.back()["ganon_sword_slot"] = info[4];
+                list.back()["ganon_ring"] = info[5];
+                list.back()["ganon_head"] = Vec3(head);
+                list.back()["ganon_sword_pos"] = Vec3(sword);
+            }
+            if (a->id == ACTOR_BG_MORI_HINERI) {
+                // Salas 2026-10-18 (F7): Init rewrites params (0-3: which corridor, turned or not); the switch flag the
+                // twisted corridor turns by is kept in its own field.
+                list.back()["switch_flag"] = ((const BgMoriHineri*)a)->switchFlag;
+            }
+            if (a->id == ACTOR_BG_MORI_KAITENKABE) {
+                // Salas 2026-10-18 (F8): the turning wall's state (1: turning) and the Link that turns it (-1: none).
+                const BgMoriKaitenkabe* w = (const BgMoriKaitenkabe*)a;
+                list.back()["kabe_turning"] = w->rotYdeg != 0.0f ? 1 : 0;
+                list.back()["kabe_pusher"] = w->zmpPusherSlot - 1;
+            }
+            if (a->id == ACTOR_BG_MORI_ELEVATOR) {
+                // Salas 2026-10-18 (F10): the switch state the elevator last acted on (D-198).
+                list.back()["elevator_seen_switch"] = ((const BgMoriElevator*)a)->unk_16C;
+            }
+            if (a->id == ACTOR_EN_HORSE) {
+                // D-208 (R4): the horse's action (EnHorseAction: 0 frozen, 2 mounted idle...) and state flags (0x2000:
+                // inactive, not in the world: waiting to be called).
+                list.back()["horse_action"] = (int)((const EnHorse*)a)->action;
+                list.back()["horse_flags"] = (uint64_t)((const EnHorse*)a)->stateFlags;
+                list.back()["horse_owner"] = ((const EnHorse*)a)->zmpOwner - 1;    // D-233: slot, -1 nobody's
+                list.back()["horse_boosts"] = (int)((const EnHorse*)a)->numBoosts; // D-220
+            }
+            if (a->id == ACTOR_EN_HORSE_GAME_CHECK) {
+                // D-223: Ingo's race checker (type 1): the checkpoints it counted for "the player"'s horse, its start
+                // flags (1: the player's horse was let go) and the result (0: none yet). (The actor's header does not
+                // build as C++, its function type names a parameter `this`: the layout of EnHorseGameCheckIngoRace.)
+                struct Base {
+                    Actor actor;
+                    s32 type;
+                };
+                struct IngoRace {
+                    Base base; // (padded as the C struct: startFlags does not follow type directly)
+                    s32 startFlags;
+                    s32 playerCheck[3];
+                    s32 ingoCheck[3];
+                    Actor* ingoHorse;
+                    s32 startTimer;
+                    s32 result;
+                };
+                const IngoRace* r = (const IngoRace*)a;
+                list.back()["hgc_type"] = r->base.type;
+                if (r->base.type == 1) {
+                    list.back()["hgc_player_check"] = { r->playerCheck[0], r->playerCheck[1], r->playerCheck[2] };
+                    list.back()["hgc_start_flags"] = r->startFlags;
+                    list.back()["hgc_result"] = r->result;
+                }
+            }
+            if (a->id == ACTOR_MIR_RAY) {
+                // R2 (D-212): the beam's reflection per slot, computed in the tick (0: none), whether the beam is off,
+                // and per slot whether that Link holds up a Mirror Shield and where the shield is (shieldMf).
+                const MirRay* m = (const MirRay*)a;
+                json in = json::array(), sh = json::array(), at = json::array();
+                for (int k = 0; k < ZMP_MAX_PLAYERS; k++) {
+                    Player* p = Zmp_SlotPlayer(k);
+                    in.push_back(m->zmpIntensity[k]);
+                    sh.push_back(p != nullptr && p->rightHandType == PLAYER_MODELTYPE_RH_SHIELD &&
+                                         p->currentShield == PLAYER_SHIELD_MIRROR
+                                     ? 1
+                                     : 0);
+                    at.push_back(p != nullptr ? json::array({ p->shieldMf.xw, p->shieldMf.yw, p->shieldMf.zw })
+                                              : json::array());
+                }
+                list.back()["reflect_intensity"] = in;
+                list.back()["un_lit"] = m->unLit;
+                list.back()["mirror_shield"] = sh;
+                list.back()["shield_pos"] = at;
+                if (m->colliderSph.elements != nullptr) { // (only the beams with a sphere, params & 2)
+                    // D-225: the sphere the window's own beam lights things with (a sun standing in its pool).
+                    const ColliderJntSphElement* e = &m->colliderSphItem;
+                    list.back()["ray_sphere"] = { e->dim.worldSphere.center.x, e->dim.worldSphere.center.y,
+                                                  e->dim.worldSphere.center.z, e->dim.worldSphere.radius };
+                }
+            }
+            if (a->id == ACTOR_OBJ_LIGHTSWITCH) {
+                // D-225: a sun: its face (0 eyes closed, 1 open, 2 smiling: on), whether a light beam hit it last tick
+                // (AC_HIT), and its sphere (moved when it is drawn: a sun on a block follows the block a tick late).
+                const ObjLightswitch* l = (const ObjLightswitch*)a;
+                const ColliderJntSphElement* e = &l->colliderItems[0];
+                list.back()["sun_face"] = l->faceTextureIndex;
+                list.back()["sun_hit"] = (l->prevFrameACflags & AC_HIT) ? 1 : 0;
+                list.back()["sun_sphere"] = { e->dim.worldSphere.center.x, e->dim.worldSphere.center.y,
+                                              e->dim.worldSphere.center.z, e->dim.worldSphere.radius };
+            }
+            if (a->id == ACTOR_OBJ_SYOKUDAI) {
+                // f6_castle_rooms.py: a torch is lit while its timer is not 0 (negative: lit for good).
+                list.back()["torch_lit"] = ((const ObjSyokudai*)a)->litTimer != 0 ? 1 : 0;
+            }
+            if (a->id == ACTOR_BOSS_GANONDROF) {
+                // Phase 6 scenario tests (Phantom Ganon with six players): the real boss (params 1) and the fakes that
+                // ride out of the other paintings (params 10-15). Its fight lives in its own fields (no statics).
+                const BossGanondrof* g = (const BossGanondrof*)a;
+                list.back()["gnd_health"] = (s8)a->colChkInfo.health;
+                list.back()["gnd_fly_mode"] = g->flyMode;
+                list.back()["gnd_death_state"] = g->deathState;
+                list.back()["gnd_death_camera"] = g->deathCamera;
+                list.back()["gnd_return_count"] = g->returnCount;
+                list.back()["gnd_kill"] = g->killActor;
+                list.back()["gnd_throw_count"] = g->work[GND_THROW_COUNT];
+                list.back()["gnd_invincible"] = g->work[GND_INVINC_TIMER];
+                list.back()["gnd_timer0"] = g->timers[0];
+                list.back()["gnd_targetable"] = (a->flags & ACTOR_FLAG_ATTENTION_ENABLED) ? 1 : 0;
+                list.back()["gnd_action"] = CodeOffset((const void*)g->actionFunc);
+                list.back()["gnd_body"] = Vec3(g->targetPos);
+                list.back()["gnd_stunned"] = g->actionFunc == BossGanondrof_Stunned ? 1 : 0;
+                list.back()["gnd_charging"] = g->actionFunc == BossGanondrof_Charge ? 1 : 0;
+            }
+            if (a->id == ACTOR_BOSS_FD) {
+                // Phase 6 scenario tests (Volvagia with six players): the flying body. Its intro (BFD_CS_*), its
+                // action (BOSSFD_*), the hole it goes to, its health (the head's hits count here too), the flames of
+                // its breath alive (its own and the head's: they share the effects).
+                const BossFd* f = (const BossFd*)a;
+                int flames = 0;
+                for (int i = 0; i < BOSSFD_EFFECT_COUNT; i++) {
+                    flames += f->effects[i].type == BFD_FX_FIRE_BREATH ? 1 : 0;
+                }
+                list.back()["fd_intro_state"] = f->introState;
+                list.back()["fd_intro_camera"] = f->introCamera;
+                list.back()["fd_action_state"] = f->work[BFD_ACTION_STATE];
+                list.back()["fd_health"] = (s8)a->colChkInfo.health;
+                list.back()["fd_hole_index"] = f->holeIndex;
+                list.back()["fd_face_exposed"] = f->faceExposed;
+                list.back()["fd_skin_segments"] = f->skinSegments;
+                list.back()["fd_handoff"] = f->handoffSignal;
+                list.back()["fd_platform"] = f->platformSignal;
+                list.back()["fd_waiting"] = f->actionFunc == BossFd_Wait ? 1 : 0;
+                list.back()["fd_rock_timer"] = f->work[BFD_ROCK_TIMER];
+                list.back()["fd_fly_count"] = f->work[BFD_FLY_COUNT];
+                list.back()["fd_breath_timer"] = f->fireBreathTimer;
+                list.back()["fd_flames"] = flames;
+                list.back()["fd_timers"] = json(std::vector<int>(f->timers, f->timers + 6));
+            }
+            if (a->id == ACTOR_BOSS_FD2) {
+                // Volvagia's head in the holes: what it does, its death cutscene (DEATH_*), its hole counter.
+                const BossFd2* h = (const BossFd2*)a;
+                const char* act = h->actionFunc == BossFd2_Emerge        ? "emerge"
+                                  : h->actionFunc == BossFd2_Idle        ? "idle"
+                                  : h->actionFunc == BossFd2_Burrow      ? "burrow"
+                                  : h->actionFunc == BossFd2_BreatheFire ? "breathe"
+                                  : h->actionFunc == BossFd2_ClawSwipe   ? "claw"
+                                  : h->actionFunc == BossFd2_Vulnerable  ? "vulnerable"
+                                  : h->actionFunc == BossFd2_Damaged     ? "damaged"
+                                  : h->actionFunc == BossFd2_Death       ? "death"
+                                  : h->actionFunc == BossFd2_Wait        ? "wait"
+                                                                         : "other";
+                list.back()["fd2_action"] = act;
+                list.back()["fd2_action_state"] = h->work[FD2_ACTION_STATE];
+                list.back()["fd2_death_state"] = h->deathState;
+                list.back()["fd2_death_camera"] = h->deathCamera;
+                list.back()["fd2_hole_counter"] = h->work[FD2_HOLE_COUNTER];
+                list.back()["fd2_invincible"] = h->work[FD2_INVINC_TIMER];
+                list.back()["fd2_timer0"] = h->timers[0];
+                list.back()["fd2_head"] = Vec3(h->headPos);
+            }
+            if (a->id == ACTOR_BG_HAKA_MEGANE) {
+                // The Shadow Temple's and the Well's pieces seen with the Lens (row B10): whether its collision is one
+                // the Lens turns off (1), none at all (0) or not yet made (-1), and its dynamic collision flags now
+                // (bit 1 in use, bit 2 off; -1 without any).
+                const BgHakaMegane* m = (const BgHakaMegane*)a;
+                list.back()["megane_reacts"] = BgHakaMegane_ZmpReacts(m);
+                list.back()["megane_bg_flags"] = (m->dyna.bgId >= 0 && m->dyna.bgId < BG_ACTOR_MAX)
+                                                     ? (int)gPlayState->colCtx.dyna.bgActorFlags[m->dyna.bgId]
+                                                     : -1;
+            }
+            if (a->id == ACTOR_EN_RD) {
+                // A ReDead or Gibdo (row B13, D-158): its action, timers, head and upper body, and its last group
+                // scream as the game saw it (z_en_rd.c, EnRd_ZmpScream): the test judges who was in reach from these.
+                const EnRd* r = (const EnRd*)a;
+                list.back()["home"] = Vec3(a->home.pos);
+                list.back()["rd_action"] = r->action;
+                list.back()["rd_stun_wait"] = r->playerStunWaitTimer;
+                list.back()["rd_head_yaw"] = r->headYRotation;
+                list.back()["rd_body_yaw"] = r->upperBodyYRotation;
+                list.back()["rd_screams"] = r->zmpScreams;
+                list.back()["rd_scream_frame"] = r->zmpScreamFrame;
+                list.back()["rd_scream_kind"] = r->zmpScreamKind;
+                list.back()["rd_scream_facing"] = r->zmpScreamFacing;
+                list.back()["rd_scream_frozen"] = r->zmpScreamFrozen;
+                list.back()["rd_scream_skipped"] = r->zmpScreamSkipped;
+                list.back()["rd_scream_from"] = Vec3(r->zmpScreamFrom);
+                json links = json::array();
+                for (int k = 0; k < 6; k++) {
+                    links.push_back(Vec3(r->zmpScreamLinks[k]));
+                }
+                list.back()["rd_scream_links"] = links;
+            }
+            if (a->id == ACTOR_BOSS_SST) {
+                // Bongo Bongo (f6_shadow.py): the head (params -1) or a hand (0 left, 1 right), what it does (the name
+                // of its action, z_boss_sst.c), the hands' state machine (sHandState: 0 wait ... 8 damaged), whether
+                // its body pushes Links (OC on: off while a hand holds a Link alive), the Link it grabbed last
+                // (D-154: slot, -1 nobody) and the head's health.
+                const BossSst* s = (const BossSst*)a;
+                list.back()["sst_part"] = a->params < 0 ? "head" : "hand";
+                list.back()["sst_action"] = BossSst_ZmpActionName(s);
+                list.back()["sst_hand_state"] = BossSst_ZmpHandState(s);
+                list.back()["sst_oc_on"] = (s->colliderJntSph.base.ocFlags1 & OC1_ON) ? 1 : 0;
+                list.back()["sst_held_slot"] = (int)s->zmpHeldSlot - 1;
+                list.back()["sst_health"] = (s8)a->colChkInfo.health;
+                list.back()["sst_timer"] = s->timer;
+            }
+            if (a->id == ACTOR_BOSS_MO) {
+                // Phase 6 scenario tests (Morpha with six players): the core (params 0 once it is born) and its
+                // tentacles (params 100). Its intro and death (csState: 0 battle, 1-5 intro, 100-105 and 150 death),
+                // its action (work[0]: core 0 move, 1 make a tentacle, 2 under the water, 5 stunned, 10 in the
+                // tentacle, 11 back out; tentacle 0 ready, 1 swing, 2 attack, 3 curl, 4 grab, 5 shake, 10 wait,
+                // 11 spawn, 100 cut, 101 retreat, 102 despawn, 200+ death), its health, the shake camera, the water,
+                // the Link it holds (D-134: by the players' parent, compared and never followed; and its own field).
+                const BossMo* m = (const BossMo*)a;
+                int grabbed = -1;
+                for (int k = 0; k < ZMP_MAX_PLAYERS; k++) {
+                    const Player* p = Zmp::Players::IsPresent(k) ? Zmp::Players::SlotPlayer(k) : nullptr;
+                    if (p != nullptr && p->actor.parent == a) {
+                        grabbed = k;
+                    }
+                }
+                list.back()["mo_part"] = a->params == 100 ? "tentacle" : "core";
+                list.back()["mo_cs_state"] = m->csState;
+                list.back()["mo_action_state"] = m->work[0];
+                list.back()["mo_health"] = (s8)a->colChkInfo.health;
+                list.back()["mo_hit_count"] = m->hitCount;
+                list.back()["mo_cs_camera"] = m->csCamera;
+                list.back()["mo_water_level"] = m->waterLevel;
+                list.back()["mo_mash"] = m->mashCounter;
+                list.back()["mo_timer0"] = m->timers[0];
+                list.back()["mo_draw"] = m->drawActor;
+                list.back()["mo_held_slot"] = m->zmpHeldSlot;
+                list.back()["mo_grabbed"] = grabbed;
+                list.back()["mo_pos_in_tent"] = m->work[6];
+                list.back()["mo_invincible"] = m->work[4];
+                list.back()["mo_cut_index"] = m->cutIndex;
+                list.back()["mo_targetable"] = (a->flags & ACTOR_FLAG_ATTENTION_ENABLED) ? 1 : 0;
+                list.back()["mo_tip"] = Vec3(m->tentPos[40]);
+            }
+            if (a->id == ACTOR_EN_FHG) {
+                // Phantom Ganon's horse: the intro (cutsceneState, INTRO_*) and the paintings it rides between.
+                const EnfHG* h = (const EnfHG*)a;
+                list.back()["fhg_cutscene_state"] = h->cutsceneState;
+                list.back()["fhg_cutscene_camera"] = h->cutsceneCamera;
+                list.back()["fhg_cur_painting"] = h->curPainting;
+                list.back()["fhg_target_painting"] = h->targetPainting;
+                list.back()["fhg_in_painting"] = h->bossGndInPainting;
+                list.back()["fhg_hit_timer"] = h->hitTimer;
+                list.back()["fhg_timer0"] = h->timers[0];
+                list.back()["fhg_action"] = CodeOffset((const void*)h->actionFunc);
+            }
+            if (a->id == ACTOR_EN_FHG_FIRE) {
+                // Its lightning, its energy ball (params 50: fire mode 0 towards a player, 1 returned, 2 reflected by
+                // the boss) and its warps.
+                const EnFhgFire* f = (const EnFhgFire*)a;
+                list.back()["fhgf_fire_mode"] = f->work[FHGFIRE_FIRE_MODE];
+                list.back()["fhgf_return_count"] = f->work[FHGFIRE_RETURN_COUNT];
+                list.back()["fhgf_timer"] = f->work[FHGFIRE_TIMER];
+                list.back()["fhgf_kill_timer"] = f->work[FHGFIRE_KILL_TIMER];
+                list.back()["fhgf_speed"] = a->speedXZ;
+            }
+        }
+    }
+    return { { "ok", true }, { "tick", sFrame }, { "count", list.size() }, { "actors", list } };
+}
+
+bool IsPlayOnlyConsoleCommand(const std::string& cmdline) {
+    std::string name = cmdline.substr(0, cmdline.find(' '));
+    static const char* sAlwaysOk[] = { "file_select", "reset", "quit", "help", "set_slot", "clear" };
+    for (const char* ok : sAlwaysOk) {
+        if (name == ok) {
+            return false;
+        }
+    }
+    return true;
+}
+
+json LockstepJson() {
+    auto ls = Zmp::Lockstep::GetStatus();
+    json players = json::array();
+    for (auto& p : ls.players) {
+        players.push_back({ { "slot", p.slot },
+                            { "name", p.name },
+                            { "state", p.state },
+                            { "rtt", p.rtt },
+                            { "leader", p.leader },
+                            { "scene", p.scene },
+                            { "group", p.group } });
+    }
+    json notices = json::array();
+    for (auto& n : ls.sceneNotices) {
+        notices.push_back({ { "name", n.name }, { "scene", n.scene }, { "age", n.age } });
+    }
+    return { { "phase", Zmp::Lockstep::PhaseName(ls.phase) },
+             { "slot", ls.slot },
+             { "tick", ls.tick },
+             { "delay", ls.delay },
+             { "queued", ls.queued },
+             { "waiting", ls.waiting },
+             { "wait_ms", ls.waitMs },
+             { "waiting_for", ls.waitingFor },
+             { "stalls", ls.stalls },
+             { "max_stall_ms", ls.maxStallMs },
+             { "resyncs", ls.resyncs },
+             { "resyncs_seen", ls.resyncsSeen },
+             { "load_mismatches", ls.loadMismatches },
+             { "last_resync_tick", ls.lastResyncTick },
+             { "leader", ls.leader },
+             { "group_tick", ls.groupTick },
+             { "countdown", ls.countdown },
+             { "error", ls.lastError },
+             { "present", Zmp::Players::PresentCount() },
+             { "anchor", gZmpSim.anchor },
+             { "last_spawn_ms", ls.lastSpawnMs },
+             { "last_entry_lead", ls.lastEntryLead },
+             { "relocated_loads", ls.relocatedLoads },
+             { "last_relocated", ls.lastRelocated },
+             { "last_relocated_odd", ls.lastRelocatedOdd },
+             { "catching_up", ls.catchingUp },
+             // (diagnosis of inputs that do not reach the simulation: what this machine last sent and for which tick)
+             { "last_sent_buttons", ls.lastSentButtons },
+             { "next_input_tick", ls.nextInputTick },
+             { "next_server_tick", ls.nextServerTick },
+             { "local_input_blocked", ls.localInputBlocked },
+             { "inputs_held", ls.inputsHeld },
+             { "tick_cost_us", ls.tickCostUs },
+             { "tick_full_cost_us", ls.tickFullCostUs },
+             { "frames_skipped", ls.framesSkipped },
+             // D-192: random numbers drawn from the game's generator while presenting a frame or from another thread
+             { "rand_outside_tick", Zmp_RandOutsideTickCount() },
+             { "shared_held", ls.sharedHeld },
+             { "ticks_played", ls.ticksPlayed },
+             // One snapshot for the tests' "is this player really playing in that group?": its own Link is in the
+             // group it runs in (an event sent for it now acts on it), and the scene the game is in.
+             { "own_present", ls.phase == Zmp::Lockstep::Phase::Running && Zmp_MultiActive() && ls.slot >= 0 &&
+                                  Zmp::Players::IsPresent(ls.slot) },
+             { "game_scene", (gGameState != nullptr && gGameState->main == Play_Main && gPlayState != nullptr)
+                                 ? (int)gPlayState->sceneNum
+                                 : -1 },
+             { "invite_by", Zmp::Players::Invite().by },
+             { "invite_scene", Zmp::Players::Invite().scene },
+             { "invite_hold", Zmp::Players::Invite().hold },
+             { "age_pending", gZmpSim.agePending },
+             { "multi", Zmp_MultiActive() != 0 },
+             { "game_over_chooser", Zmp::Lockstep::GameOverChooser() },
+             { "end_notice", ls.endNotice },
+             { "save_skipped", ls.saveSkipped },
+             // Phase 5: groups per scene, shared game, world clock.
+             { "group", ls.groupId },
+             { "group_scene", ls.groupScene },
+             { "detach_scene", ls.detachScene },
+             { "free_run", ls.freeRun },
+             { "owns_save", ls.ownsSave },
+             { "shared_sent", ls.sharedSent },
+             { "shared_applied", ls.sharedApplied },
+             { "last_shared", ls.lastShared },
+             { "group_joins", ls.groupJoins },
+             { "name_tags", ls.nameTags },
+             { "last_join_ms", ls.lastJoinMs },
+             { "clock_hold", gZmpSim.clockHold },
+             { "scene_notices", notices },
+             { "players", players } };
+}
+
+json NetStatusJson() {
+    auto st = Zmp::Client::Get().GetStatus();
+    json players = json::array();
+    for (auto& p : st.players) {
+        players.push_back({ { "id", p.id }, { "name", p.name }, { "slot", p.slot }, { "state", p.state } });
+    }
+    auto hs = Zmp::Client::Get().GetHandshake();
+    return { { "ok", true },
+             { "state", Zmp::Client::StateName(st.state) },
+             { "host", st.host },
+             { "port", st.port },
+             { "room", st.room },
+             { "name", st.name },
+             { "player_id", st.playerId },
+             { "players", players },
+             { "rtt_ms", st.rttMs },
+             { "reason", st.reason },
+             { "detail", st.detail },
+             { "build_hash", hs.buildHash },
+             // (local diagnostic, never sent to the server: where this process has the executable, D-073)
+             { "image_base", ImageBase() },
+             { "oot_hash", hs.ootHash },
+             { "rom_name", hs.romName },
+             { "soh_hash", hs.sohHash },
+             { "cvar_profile_hash", hs.cvarProfileHash },
+             { "lockstep", LockstepJson() } };
+}
+
+std::string Hex(uint64_t v) {
+    char b[24];
+    snprintf(b, sizeof(b), "%016llX", (unsigned long long)v);
+    return b;
+}
+
+json SessionJson() {
+    auto st = Sim::GetStatus();
+    json j = { { "mode", Sim::ModeName(st.mode) },
+               { "armed", st.armed },
+               { "paused", st.paused },
+               { "tick", st.tick },
+               { "length", st.replayLength },
+               { "finished", st.replayFinished },
+               { "checked", st.checked },
+               { "mismatches", st.mismatches },
+               { "first_mismatch", st.firstMismatch == UINT32_MAX ? json(nullptr) : json(st.firstMismatch) },
+               { "speed", st.speed },
+               { "file", st.file } };
+    if (st.hasHash) {
+        j["hash"] = Hex(st.lastHash);
+    }
+    return j;
+}
+
+std::chrono::steady_clock::time_point Deadline(const json& cmd) {
+    return std::chrono::steady_clock::now() + std::chrono::milliseconds(cmd.value("timeout_ms", 60000));
+}
+
+} // namespace
+
+void Dispatch(const RequestPtr& req) {
+    const json& cmd = req->cmd;
+    std::string name = cmd.value("cmd", std::string());
+    if (name != "ping" && name.rfind("query.", 0) != 0) {
+        Log("harness: " + cmd.dump());
+    }
+
+    if (name == "ping") {
+        req->Reply({ { "ok", true },
+                     { "tick", sFrame },
+                     { "scene", InPlay() ? gPlayState->sceneNum : -1 },
+                     { "room", InPlay() ? gPlayState->roomCtx.curRoom.num : -1 },
+                     { "state", GameStateName() },
+                     { "harness_port", GetPort() } });
+    } else if (name == "input.set") {
+        PadStep step = ParsePad(cmd);
+        StartScript({ step }, nullptr);
+        req->Reply({ { "ok", true }, { "tick", sFrame } });
+    } else if (name == "input.script") {
+        std::deque<PadStep> steps;
+        for (auto& s : cmd.value("steps", json::array())) {
+            json pad = s.contains("pad") ? s["pad"] : s;
+            PadStep step = ParsePad(pad);
+            step.frames = s.value("frames", step.frames);
+            if (step.frames <= 0) {
+                step.frames = 1;
+            }
+            steps.push_back(step);
+        }
+        if (cmd.value("async", false)) {
+            StartScript(std::move(steps), nullptr);
+            req->Reply({ { "ok", true }, { "tick", sFrame } });
+        } else {
+            StartScript(std::move(steps), req);
+        }
+    } else if (name == "input.release") {
+        EndScript(false);
+        req->Reply({ { "ok", true }, { "tick", sFrame } });
+    } else if (name == "console") {
+        std::string line = cmd.value("cmd_line", cmd.value("line", std::string()));
+        if (line.empty()) {
+            req->Reply({ { "ok", false }, { "error", "missing 'line'" } });
+        } else if (!InPlay() && IsPlayOnlyConsoleCommand(line)) {
+            req->Reply({ { "ok", false }, { "error", "not in play (state " + GameStateName() + ")" } });
+        } else {
+            std::string output;
+            int32_t rc = Ship::Context::GetRawInstance()->GetConsole()->Run(line, &output);
+            req->Reply({ { "ok", rc == 0 }, { "rc", rc }, { "output", output }, { "tick", sFrame } });
+        }
+    } else if (name == "query.player") {
+        if (!InPlay() || GET_PLAYER(gPlayState) == nullptr) {
+            req->Reply({ { "ok", false }, { "error", "not in play" }, { "state", GameStateName() } });
+        } else if (Zmp_MultiActive()) {
+            int slot = cmd.value("index", Zmp::Players::LocalSlot());
+            Player* p = Zmp::Players::SlotPlayer(slot);
+            if (p == nullptr) {
+                req->Reply({ { "ok", false }, { "error", "no player in slot " + std::to_string(slot) } });
+            } else {
+                req->Reply(PlayerJson(p, slot));
+            }
+        } else if (cmd.value("index", 0) != 0) {
+            req->Reply({ { "ok", false }, { "error", "only player 0 exists outside a multiplayer game" } });
+        } else {
+            req->Reply(PlayerJson(GET_PLAYER(gPlayState)));
+        }
+    } else if (name == "query.actors") {
+        if (!InPlay()) {
+            req->Reply({ { "ok", false }, { "error", "not in play" } });
+        } else {
+            req->Reply(ActorsJson(cmd));
+        }
+    } else if (name == "query.transitions") {
+        // D-117 tests: every door between two rooms of the scene (loaded or not): the boss door of each dungeon.
+        if (!InPlay()) {
+            req->Reply({ { "ok", false }, { "error", "not in play" } });
+        } else {
+            json list = json::array();
+            for (int i = 0; i < gPlayState->transiActorCtx.numActors; i++) {
+                const TransitionActorEntry& t = gPlayState->transiActorCtx.list[i];
+                list.push_back({ { "index", i },
+                                 { "id", t.id < 0 ? -t.id : t.id },
+                                 { "spawned", t.id < 0 },
+                                 { "params", (u16)t.params },
+                                 { "pos", { t.pos.x, t.pos.y, t.pos.z } },
+                                 { "rot_y", t.rotY },
+                                 { "front_room", t.sides[0].room },
+                                 { "back_room", t.sides[1].room } });
+            }
+            req->Reply({ { "ok", true }, { "transitions", list } });
+        }
+    } else if (name == "debug.boss_exits") {
+        // D-117 tests: the exits into a boss's scene found in this scene's collision, and the doors (spawned
+        // transition actors) that are boss doors from their +z side (1) or their -z side (-1).
+        if (!InPlay()) {
+            req->Reply({ { "ok", false }, { "error", "not in play" } });
+        } else {
+            json exits = json::array();
+            for (const auto& e : Zmp::BossDoor::Exits(gPlayState)) {
+                exits.push_back({ { "pos", { e.x, e.y, e.z } },
+                                  { "entrance", e.entrance },
+                                  { "scene", e.scene },
+                                  { "polys", e.polys } });
+            }
+            json doors = json::array();
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_DOOR].head; a != nullptr; a = a->next) {
+                bool plus = Zmp::BossDoor::IsBossDoorFrom(gPlayState, a, 1);
+                bool minus = Zmp::BossDoor::IsBossDoorFrom(gPlayState, a, -1);
+                if (plus || minus) {
+                    doors.push_back({ { "id", a->id },
+                                      { "params", (u16)a->params },
+                                      { "pos", Vec3(a->world.pos) },
+                                      { "rot_y", a->shape.rot.y },
+                                      { "side", plus ? 1 : -1 } });
+                }
+            }
+            req->Reply({ { "ok", true }, { "exits", exits }, { "doors", doors } });
+        }
+    } else if (name == "query.state") {
+        auto st = Sim::GetStatus();
+        json resp = { { "ok", true },
+                      { "tick", sFrame },
+                      { "sim_tick", st.tick },
+                      { "state", GameStateName() },
+                      { "scene", InPlay() ? gPlayState->sceneNum : -1 },
+                      { "room", InPlay() ? gPlayState->roomCtx.curRoom.num : -1 },
+                      { "day_time", gSaveContext.dayTime },
+                      { "script_active", sScriptActive },
+                      { "session", SessionJson() },
+                      { "cvar_profile_hash", Hex(CVarProfile::Hash()) },
+                      { "cvar_reverts", CVarProfile::RevertCount() },
+                      { "audio_muted", Zmp_AudioMuted() },
+                      { "audio_output_muted", Zmp_AudioOutputMuted() },
+                      { "net", Zmp::Client::StateName(Zmp::Client::Get().GetStatus().state) },
+                      { "lockstep", LockstepJson() },
+                      { "fps", ImGui::GetCurrentContext() != nullptr ? ImGui::GetIO().Framerate : 0.0f },
+                      { "frame_interval_ms", sFrameIntervalMs },
+                      { "frame_interval_max_ms", sFrameIntervalMaxMs } };
+        if (st.hasHash) {
+            resp["hash"] = Hex(st.lastHash);
+            resp["hash_tick"] = st.tick - 1;
+        }
+        if (InPlay()) {
+            // Phase 4: cameras (per-player active camera, scope of the sub cameras), cutscene, rooms.
+            json subs = json::array();
+            for (int i = CAM_ID_SUB_FIRST; i < NUM_CAMS; i++) {
+                const Camera* c = gPlayState->cameraPtrs[i];
+                subs.push_back({ { "id", i },
+                                 { "exists", c != nullptr },
+                                 { "scope", Zmp::Players::CamScope(i) },
+                                 { "status", c != nullptr ? c->status : 0 },
+                                 { "setting", c != nullptr ? c->setting : 0 },
+                                 { "cs_id", c != nullptr ? c->csId : 0 } });
+            }
+            json active = json::array();
+            for (int k = 0; k < ZMP_MAX_PLAYERS; k++) {
+                active.push_back(Zmp::Players::SlotActiveCam(k));
+            }
+            resp["cameras"] = { { "active_camera", gPlayState->activeCamera },
+                                { "per_slot", active },
+                                { "sub", subs },
+                                { "global_cs", Zmp::Players::GlobalCutscene() },
+                                { "cs_trigger", Zmp::Players::CutsceneTrigger() },
+                                // (D-121, finding AR: the arc of the group cutscene, D-111, is judged from its centre)
+                                { "arc_centre", json::array({ gZmpSim.csArcCentre[0], gZmpSim.csArcCentre[1],
+                                                              gZmpSim.csArcCentre[2] }) },
+                                { "arc_placed", gZmpSim.csArcPlaced } };
+            resp["cs_state"] = gPlayState->csCtx.state;
+            resp["cs_frames"] = gPlayState->csCtx.frames;
+            // Phase 5b: one text box per player. The text box of this instance's player (the anchor's during a
+            // cutscene everybody watches, when its own is closed), and the mode of every slot's.
+            MessageContext* msg = &gPlayState->msgCtx;
+            if (Zmp_MultiActive()) {
+                const MessageContext* own = Zmp::Players::SlotMessage(Zmp::Players::LocalSlot());
+                const MessageContext* shared = Zmp::Players::SlotMessage(Zmp::Players::Anchor());
+                bool cs = gPlayState->csCtx.state != CS_STATE_IDLE;
+                msg = (MessageContext*)((own == nullptr || (own->msgMode == MSGMODE_NONE && cs && shared != nullptr))
+                                            ? shared
+                                            : own);
+                if (msg == nullptr) {
+                    msg = &gPlayState->msgCtx;
+                }
+                json oca = json::array(); // per slot: [ocarina mode, last song played]
+                for (int k = 0; k < ZMP_MAX_PLAYERS; k++) {
+                    const MessageContext* m = Zmp::Players::SlotMessage(k);
+                    oca.push_back(
+                        { m != nullptr ? (int)m->ocarinaMode : -1, m != nullptr ? (int)m->lastPlayedSong : -1 });
+                }
+                resp["ocarinas"] = oca;
+                json modes = json::array();
+                for (int k = 0; k < ZMP_MAX_PLAYERS; k++) {
+                    modes.push_back(Zmp::Players::SlotMsgMode(k));
+                }
+                resp["msg_modes"] = modes;
+            }
+            resp["msg_mode"] = msg->msgMode;
+            resp["msg_text_id"] = msg->textId;
+            // D-222 (Ingo's race): the answer chosen in the box, Ingo's ride/race state and the cutscene index
+            resp["msg_choice"] = msg->choiceIndex;
+            resp["event_inf0"] = gSaveContext.eventInf[0];
+            resp["cutscene_index"] = gSaveContext.cutsceneIndex;
+            resp["inf_table_a"] = gSaveContext.infTable[10];
+            resp["talk_state"] = Message_GetState(msg);
+            // The simulation's pause context: the group game over menu (D-058).
+            resp["pause_state"] = gPlayState->pauseCtx.state;
+            resp["prompt_choice"] = gPlayState->pauseCtx.promptChoice;
+            resp["game_over"] = gPlayState->gameOverCtx.state;
+            resp["prev_room"] = gPlayState->roomCtx.prevRoom.num;
+            resp["rooms_loaded"] = Zmp::Players::LoadedRooms(gPlayState);
+            resp["text_hidden"] = Zmp::Players::LocalTextHidden();
+            // Phase 5b: the title card with the scene's name (running in the simulation) and whether this screen shows
+            // it
+            resp["play_inits"] = Zmp::Players::PlayInitCount();
+            resp["invalid_camera_modes"] = Zmp_InvalidCameraModeCount();
+            resp["rupee_debt"] = gZmpSim.rupeeDebt;
+            resp["bg_image"] = Zmp::Players::LocalBgImage();
+            resp["hud_health"] = Zmp::Players::HudHealth();
+            resp["fill_hidden_frame"] = Zmp::Players::FillHiddenFrame(); // (D-124)
+            {
+                // (D-126) the players whose open text box this screen shows
+                json shown = json::array();
+                int local = Zmp::Players::LocalSlot();
+                for (int k = 0; k < ZMP_MAX_PLAYERS && Zmp_MultiActive(); k++) {
+                    if (Zmp::Players::IsPresent(k) && Zmp::Players::SlotMsgMode(k) != MSGMODE_NONE && local >= 0 &&
+                        Zmp::Players::ScreenShowsText(gPlayState, k, local)) {
+                        shown.push_back(k);
+                    }
+                }
+                resp["texts_shown"] = shown;
+            }
+            resp["gameplay_frames"] = gPlayState->gameplayFrames;
+            resp["picture_eye"] = Vec3(Zmp::Players::PictureEye());
+            resp["picture_at"] = Vec3(Zmp::Players::PictureAt());
+            resp["do_action"] = gPlayState->interfaceCtx.unk_1F0;
+            resp["light_effect_hidden"] = Zmp::Players::LightEffectHidden();
+            // (of the same picture as the line above: the simulation's value below may be a tick newer)
+            resp["light_adj_drawn"] = Zmp::Players::LightEffectDrawn();
+            // Finding AB: whose effect that picture took the darkening for, the simulation's owner now, who is
+            // reviving with a fairy, and the black bars that picture was cut with
+            resp["light_owner_drawn"] = Zmp::Players::LightEffectOwner();
+            resp["adj_owner"] = gZmpSim.adjOwner;
+            resp["fairy_reviver"] = Zmp::Players::FairyReviver(gPlayState);
+            resp["drawn_letterbox"] = Zmp::Players::DrawnLetterbox();
+            resp["light_adj"] = gPlayState->envCtx.adjAmbientColor[0];
+            resp["light_ambient"] = gPlayState->lightCtx.ambientColor[0];
+            resp["title_alpha"] = gPlayState->actorCtx.titleCtx.alpha;
+            resp["title_hidden"] = Zmp_TitleCardHidden() != 0;
+            resp["local_light"] = Zmp::Players::LocalLightSetting();
+            resp["sim_light"] = gPlayState->envCtx.unk_BD;
+            // Finding Y: the water's lights and muffled sound are each player's own picture and sound
+            resp["water_light"] = Zmp::Players::LocalWaterLight();
+            resp["sim_outdoor_light"] = gPlayState->envCtx.unk_1F;
+            resp["sim_water_light"] = gPlayState->envCtx.unk_BF;
+            resp["water_sound"] = sAudioExtraFilter;
+            {
+                const u8* drawn = Zmp::Players::LocalDrawnLight();
+                resp["drawn_fog"] = { drawn[0], drawn[1], drawn[2] };
+                resp["drawn_ambient"] = { drawn[3], drawn[4], drawn[5] };
+            }
+            resp["env_indoors"] = gPlayState->envCtx.indoors;
+            resp["local_letterbox"] = Zmp::Players::LocalLetterbox();
+            resp["autosave_count"] = Zmp::Autosave::SavedCount();
+            resp["downed_overlay"] = Zmp::DownedOverlayText();
+            resp["shared_letterbox"] = (int)ShrinkWindow_GetCurrentVal();
+            resp["local_hud_mode"] = Zmp::Players::LocalHudMode();
+            resp["shared_hud_mode"] = gSaveContext.hudVisibilityMode;
+            resp["do_action"] = gPlayState->interfaceCtx.unk_1F0;
+            resp["fill_screen"] = gPlayState->envCtx.fillScreen;
+            resp["num_light_settings"] = gPlayState->envCtx.numLightSettings;
+            resp["local_slot"] = Zmp::Players::LocalSlot();
+            {
+                Player* lp =
+                    Zmp_MultiActive() ? Zmp::Players::SlotPlayer(Zmp::Players::LocalSlot()) : GET_PLAYER(gPlayState);
+                int fl = -1;
+                if (lp != nullptr && lp->actor.floorPoly != nullptr && lp->actor.floorBgId == BGCHECK_SCENE) {
+                    fl = (int)SurfaceType_GetLightSettingIndex(&gPlayState->colCtx, lp->actor.floorPoly, BGCHECK_SCENE);
+                }
+                resp["floor_light"] = fl;
+                resp["room_hot"] = gPlayState->roomCtx.curRoom.behaviorType2 == ROOM_BEHAVIOR_TYPE2_3;
+            }
+            json notices = json::array();
+            for (auto& n : Zmp::Players::RecentNotices(30.0)) {
+                notices.push_back({ { "slot", n.slot }, { "item", n.itemId }, { "age", n.age } });
+            }
+            resp["notices"] = notices;
+            json slotRooms = json::array();
+            for (int k = 0; k < ZMP_MAX_PLAYERS; k++) {
+                slotRooms.push_back(Zmp::Players::SlotRoom(k));
+            }
+            resp["slot_rooms"] = slotRooms;
+        }
+        req->Reply(resp);
+    } else if (name == "query.project") {
+        // Phase 5b: where a point of the world is in the picture of a player (clip space, as the simulation has it).
+        Vec3f world = { cmd.value("x", 0.0f), cmd.value("y", 0.0f), cmd.value("z", 0.0f) };
+        Vec3f proj;
+        f32 w = 0.0f;
+        bool ok = Zmp::Players::ProjectForSlot(cmd.value("slot", -1), world, &proj, &w);
+        req->Reply({ { "ok", ok }, { "tick", sFrame }, { "proj", { proj.x, proj.y, proj.z } }, { "w", w } });
+    } else if (name == "query.chat") {
+        // Phase 5b: the message box: what it shows now and everything posted so far ([category, text]).
+        json r = { { "ok", true }, { "tick", sFrame }, { "visible", Zmp::Chat::VisibleLines() } };
+        json hist = json::array();
+        for (auto& [cat, text] : Zmp::Chat::History()) {
+            hist.push_back({ cat, text });
+        }
+        r["history"] = hist;
+        r["debug_overlay"] = CVarGetInteger(ZMP_CVAR_DEBUG_OVERLAY, 0) != 0;
+        req->Reply(r);
+    } else if (name == "query.gaps") {
+        // Time between consecutive logic ticks since the last reset: worst, 99th percentile, mean.
+        std::vector<float> g = sTickGaps;
+        std::sort(g.begin(), g.end());
+        double sum = 0;
+        for (float v : g) {
+            sum += v;
+        }
+        json r = { { "ok", true },
+                   { "tick", sFrame },
+                   { "count", g.size() },
+                   { "max_ms", g.empty() ? 0.0f : g.back() },
+                   { "p99_ms", g.empty() ? 0.0f : g[(size_t)((g.size() - 1) * 0.99)] },
+                   { "mean_ms", g.empty() ? 0.0 : sum / g.size() },
+                   { "over_100", (int)(g.end() - std::upper_bound(g.begin(), g.end(), 100.0f)) },
+                   { "wait_max_ms", sGateWaitMaxMs },
+                   { "frame_max_ms", sFrameIntervalMaxMs } };
+        if (cmd.value("reset", false)) {
+            sGateWaitMaxMs = 0.0f;
+            sTickGaps.clear();
+            sGapValid = false;
+            sFrameIntervalMaxMs = 0.0f;
+        }
+        req->Reply(r);
+    } else if (name == "query.sfx") {
+        // Phase 5b: where this machine hears the sounds of a player (its own camera) next to the canonical position
+        // of the simulation, and the sounds alive in the sound banks.
+        if (!InPlay()) {
+            req->Reply({ { "ok", false }, { "error", "not in play" } });
+            return;
+        }
+        json r = { { "ok", true }, { "tick", sFrame } };
+        json links = json::array();
+        for (int k = 0; k < ZMP_MAX_PLAYERS; k++) {
+            Player* p = Zmp::Players::SlotPlayer(k);
+            if (p == nullptr) {
+                continue;
+            }
+            const f32* pos = &p->actor.projectedPos.x;
+            f32 x = Zmp_SfxCoord(pos, 0), y = Zmp_SfxCoord(pos, 1), z = Zmp_SfxCoord(pos, 2);
+            links.push_back({ { "slot", k },
+                              { "canonical", { pos[0], pos[1], pos[2] } },
+                              { "heard", { x, y, z } },
+                              { "dist", sqrtf(x * x + y * y + z * z) } });
+        }
+        r["players"] = links;
+        json live = json::array();
+        for (int bank = 0; bank < 7; bank++) {
+            u8 i = gSoundBanks[bank][0].next;
+            int guard = 0;
+            while (i != 0xFF && guard++ < 64) {
+                SoundBankEntry* e = &gSoundBanks[bank][i];
+                live.push_back(
+                    { { "bank", bank },
+                      { "sfx", e->sfxId },
+                      { "heard", { Zmp_SfxCoord(e->posX, 0), Zmp_SfxCoord(e->posX, 1), Zmp_SfxCoord(e->posX, 2) } },
+                      { "canonical", { e->posX[0], e->posX[1], e->posX[2] } } });
+                i = e->next;
+            }
+        }
+        r["live"] = live;
+        req->Reply(r);
+    } else if (name == "query.shared") {
+        // Phase 5: the shared game (what every group must agree on once the patches arrived) and the world clock.
+        std::vector<uint8_t> snap = SharedGame::Snapshot();
+        uint64_t h = 1469598103934665603ull;
+        for (uint8_t b : snap) {
+            h = (h ^ b) * 1099511628211ull;
+        }
+        int scene = cmd.value("scene", InPlay() ? (int)gPlayState->sceneNum : 0);
+        json flags = json::object();
+        if (scene >= 0 && scene < (int)ARRAY_COUNT(gSaveContext.sceneFlags)) {
+            const SavedSceneFlags& f = gSaveContext.sceneFlags[scene];
+            flags = { { "chest", f.chest }, { "swch", f.swch }, { "clear", f.clear }, { "collect", f.collect } };
+            if (InPlay() && gPlayState->sceneNum == scene) {
+                flags["live_chest"] = gPlayState->actorCtx.flags.chest;
+                flags["live_swch"] = gPlayState->actorCtx.flags.swch;
+                flags["live_tswch"] = gPlayState->actorCtx.flags.tempSwch; // D-225: switch flags 0x20 to 0x3F
+                flags["live_clear"] = gPlayState->actorCtx.flags.clear;
+                flags["live_collect"] = gPlayState->actorCtx.flags.collect;
+            }
+        }
+        json ev = json::array();
+        for (int i = 0; i < 14; i++) {
+            ev.push_back(gSaveContext.eventChkInf[i]);
+        }
+        auto base = SharedGame::Baseline();
+        uint64_t bh = 1469598103934665603ull;
+        for (uint8_t b : base) {
+            bh = (bh ^ b) * 1099511628211ull;
+        }
+        req->Reply(
+            { { "ok", true },
+              { "hash", Hex(h) },
+              { "baseline_hash", base.empty() ? json(nullptr) : json(Hex(bh)) },
+              { "size", snap.size() },
+              { "layout", SharedGame::LayoutHash() },
+              { "rupees", gSaveContext.rupees },
+              { "rupees_coming", gSaveContext.rupeeAccumulator },
+              { "health_capacity", gSaveContext.healthCapacity },
+              { "gs_tokens", gSaveContext.inventory.gsTokens },
+              { "items", json(std::vector<int>(gSaveContext.inventory.items, gSaveContext.inventory.items + 24)) },
+              { "upgrades", gSaveContext.inventory.upgrades },
+              // (block 1: what equipment the group owns, the shared inventory's; what each one wears is query.player)
+              { "equipment", gSaveContext.inventory.equipment },
+              { "quest_items", gSaveContext.inventory.questItems },
+              { "event_chk_inf", ev },
+              // (D-189: the Great Fairies' gifts: the meter's level and the "spell given" flags)
+              { "magic_level", gSaveContext.magicLevel },
+              { "magic_acquired", gSaveContext.isMagicAcquired },
+              { "double_magic", gSaveContext.isDoubleMagicAcquired },
+              { "double_defense", gSaveContext.isDoubleDefenseAcquired }, // (prep 6: the Great Fairy's gift)
+              { "item_get_inf", json(std::vector<int>(gSaveContext.itemGetInf, gSaveContext.itemGetInf + 4)) },
+              { "scene", scene },
+              { "scene_flags", flags },
+              { "day_time", gSaveContext.dayTime },
+              { "night", gSaveContext.nightFlag },
+              { "time_speed", (int)gTimeSpeed } });
+    } else if (name == "query.transitions") {
+        // Phase 4: the scene's transition actors (doors and loading planes between rooms).
+        json list = json::array();
+        if (InPlay()) {
+            const TransitionActorContext& t = gPlayState->transiActorCtx;
+            for (int i = 0; i < t.numActors; i++) {
+                const TransitionActorEntry& e = t.list[i];
+                list.push_back({ { "index", i },
+                                 { "id", e.id < 0 ? -e.id : e.id },
+                                 { "spawned", e.id < 0 },
+                                 { "front_room", e.sides[0].room },
+                                 { "back_room", e.sides[1].room },
+                                 { "pos", json::array({ e.pos.x, e.pos.y, e.pos.z }) },
+                                 { "rot_y", e.rotY },
+                                 { "params", e.params } });
+            }
+        }
+        req->Reply({ { "ok", true }, { "tick", sFrame }, { "transitions", list } });
+    } else if (name == "query.hash") {
+        auto st = Sim::GetStatus();
+        uint32_t t = cmd.contains("tick") ? cmd["tick"].get<uint32_t>() : (st.tick > 0 ? st.tick - 1 : 0);
+        uint64_t h = 0;
+        if (!Sim::HashAt(t, &h)) {
+            req->Reply({ { "ok", false },
+                         { "error", "no hash recorded for tick " + std::to_string(t) },
+                         { "sim_tick", st.tick } });
+        } else {
+            json resp = { { "ok", true }, { "tick", t }, { "hash", Hex(h) }, { "sim_tick", st.tick } };
+            uint64_t ref = 0;
+            if (Sim::ReferenceHashAt(t, &ref)) {
+                resp["ref"] = Hex(ref);
+                resp["match"] = ref == h;
+            }
+            req->Reply(resp);
+        }
+    } else if (name == "query.hashes") {
+        // Recorded hashes of ticks [from, to), for bulk comparison between instances.
+        uint32_t from = cmd.value("from", 0u);
+        uint32_t to = cmd.value("to", Sim::CurrentTick());
+        json list = json::array();
+        uint32_t first = UINT32_MAX;
+        for (uint32_t t = from; t < to; t++) {
+            uint64_t h = 0;
+            if (Sim::HashAt(t, &h)) {
+                if (first == UINT32_MAX) {
+                    first = t;
+                }
+                list.push_back(Hex(h));
+            } else if (first != UINT32_MAX) {
+                break;
+            }
+        }
+        req->Reply(
+            { { "ok", true }, { "from", first == UINT32_MAX ? json(nullptr) : json(first) }, { "hashes", list } });
+    } else if (name == "record.start") {
+        Sim::StartSpec spec;
+        spec.entrance = cmd.value("entrance", spec.entrance);
+        spec.adult = cmd.value("age", std::string("child")) == "adult";
+        spec.dayTime = (uint16_t)cmd.value("day_time", (int)spec.dayTime);
+        spec.seed = cmd.value("seed", spec.seed);
+        std::string err;
+        std::string path = std::filesystem::absolute(cmd.value("path", std::string("recording.zmpinput"))).string();
+        if (Sim::StartRecording(path, spec, cmd.value("from_state", false), &err)) {
+            req->Reply({ { "ok", true }, { "session", SessionJson() } });
+        } else {
+            req->Reply({ { "ok", false }, { "error", err } });
+        }
+    } else if (name == "record.stop") {
+        std::string err;
+        uint32_t ticks = 0;
+        bool ok = Sim::StopRecording(&err, &ticks);
+        req->Reply({ { "ok", ok }, { "ticks", ticks }, { "error", err } });
+    } else if (name == "record.event") {
+        std::string err;
+        uint32_t t = 0;
+        bool ok = Sim::RecordEvent(cmd.value("line", std::string()), &err, &t);
+        req->Reply({ { "ok", ok }, { "sim_tick", t }, { "error", err } });
+    } else if (name == "record.checkpoint" || name == "record.rewind") {
+        std::string err;
+        uint32_t t = 0;
+        std::string cpName = cmd.value("name", std::string("default"));
+        bool ok = name == "record.checkpoint" ? Sim::Checkpoint(cpName, &err, &t) : Sim::Rewind(cpName, &err, &t);
+        req->Reply({ { "ok", ok }, { "sim_tick", t }, { "error", err } });
+    } else if (name == "replay.start") {
+        std::string err;
+        if (cmd.contains("speed")) {
+            Sim::SetSpeed(cmd["speed"].get<int>());
+        }
+        std::string path = std::filesystem::absolute(cmd.value("path", std::string())).string();
+        std::string fromState = cmd.value("from_state", std::string());
+        if (!fromState.empty()) {
+            fromState = std::filesystem::absolute(fromState).string();
+        }
+        Sim::PauseOnActivate(cmd.value("pause", false));
+        if (Sim::StartReplay(path, fromState, &err)) {
+            req->Reply({ { "ok", true }, { "session", SessionJson() } });
+        } else {
+            req->Reply({ { "ok", false }, { "error", err } });
+        }
+    } else if (name == "replay.stop" || name == "session.stop") {
+        Sim::StopSession();
+        req->Reply({ { "ok", true }, { "session", SessionJson() } });
+    } else if (name == "sim.pause") {
+        Sim::SetPaused(true);
+        req->Reply({ { "ok", true }, { "sim_tick", Sim::CurrentTick() } });
+    } else if (name == "sim.resume") {
+        Sim::SetPaused(false);
+        req->Reply({ { "ok", true }, { "sim_tick", Sim::CurrentTick() } });
+    } else if (name == "sim.run_until") {
+        // Runs until `tick` ticks have been executed, then closes the tick gate.
+        Sim::SetPauseAt(cmd.value("tick", 0u));
+        req->Reply({ { "ok", true }, { "sim_tick", Sim::CurrentTick() } });
+    } else if (name == "sim.speed") {
+        Sim::SetSpeed(cmd.value("speed", 1));
+        req->Reply({ { "ok", true } });
+    } else if (name == "state.save" || name == "state.load") {
+        std::string err, info;
+        std::string path = std::filesystem::absolute(cmd.value("path", std::string("state.zmps"))).string();
+        bool ok = name == "state.save" ? Sim::SaveStateFile(path, &err, &info) : Sim::LoadStateFile(path, &err, &info);
+        req->Reply(
+            { { "ok", ok }, { "path", path }, { "info", info }, { "error", err }, { "sim_tick", Sim::CurrentTick() } });
+    } else if (name == "state.dump") {
+        std::string err;
+        std::string path = std::filesystem::absolute(cmd.value("path", std::string("state.txt"))).string();
+        uint32_t t = Sim::CurrentTick() > 0 ? Sim::CurrentTick() - 1 : 0;
+        bool ok = Sim::DumpState(path, t, &err);
+        req->Reply({ { "ok", ok }, { "path", path }, { "tick", t }, { "error", err } });
+    } else if (name == "state.census") {
+        std::string summary;
+        std::string path = std::filesystem::absolute(cmd.value("path", std::string("census.txt"))).string();
+        bool ok = State::Census(path, &summary);
+        req->Reply({ { "ok", ok }, { "path", path }, { "summary", summary } });
+    } else if (name == "debug.dump_data") {
+        // Desync hunting: raw copy of every writable section of the executable (its globals and file statics; the
+        // image lives at a fixed address, D-016), to compare two instances at the same tick.
+#ifndef _WIN32
+        req->Reply({ { "ok", false }, { "error", "debug.dump_data needs the Windows executable image" } });
+#else
+        std::string path = std::filesystem::absolute(cmd.value("path", std::string("data.bin"))).string();
+        uint8_t* base = (uint8_t*)&__ImageBase;
+        auto* dos = (IMAGE_DOS_HEADER*)base;
+        auto* nt = (IMAGE_NT_HEADERS64*)(base + dos->e_lfanew);
+        IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+        json sections = json::array();
+        FILE* f = fopen(path.c_str(), "wb");
+        bool ok = f != nullptr;
+        for (int i = 0; ok && i < nt->FileHeader.NumberOfSections; i++) {
+            if (!(sec[i].Characteristics & IMAGE_SCN_MEM_WRITE)) {
+                continue;
+            }
+            uint32_t rva = sec[i].VirtualAddress;
+            uint32_t size = sec[i].Misc.VirtualSize;
+            fwrite(&rva, 4, 1, f);
+            fwrite(&size, 4, 1, f);
+            fwrite(base + rva, 1, size, f);
+            char nm[9] = {};
+            memcpy(nm, sec[i].Name, 8);
+            sections.push_back({ { "name", nm }, { "rva", rva }, { "size", size } });
+        }
+        if (f != nullptr) {
+            fclose(f);
+        }
+        // (where the parts that are not simulation live inside two big globals, for the test that classifies what
+        // differs between instances)
+        json layout = { { "save_rva", (uint64_t)((uint8_t*)&gSaveContext - base) },
+                        { "save_size", sizeof(SaveContext) },
+                        { "save_stats_off", offsetof(SaveContext, ship.stats) },
+                        { "save_stats_size", sizeof(gSaveContext.ship.stats) },
+                        { "sim_rva", (uint64_t)((uint8_t*)&gZmpSim - base) },
+                        { "sim_size", sizeof(gZmpSim) },
+                        { "sim_slots_off", offsetof(ZmpSimState, slots) },
+                        { "sim_slot_size", sizeof(ZmpPlayerSlot) },
+                        { "sim_slot_view_off", offsetof(ZmpPlayerSlot, hasView) },
+                        { "sim_slot_target_off", offsetof(ZmpPlayerSlot, target) },
+                        { "sim_slot_target_size", sizeof(TargetContext) },
+                        { "sim_slot_camera_off", offsetof(ZmpPlayerSlot, camera) },
+                        { "sim_slot_input_off", offsetof(ZmpPlayerSlot, input) },
+                        // (the pad manager: what the state carries is `inputs`; controller presence and rumble
+                        // are this PC's hardware)
+                        { "pad_inputs_off", offsetof(PadMgr, inputs) },
+                        { "pad_inputs_size", sizeof(gPadMgr.inputs) } };
+        req->Reply(
+            { { "ok", ok }, { "path", path }, { "sections", sections }, { "tick", sFrame }, { "layout", layout } });
+#endif
+    } else if (name == "debug.dump_resources") {
+        // Desync hunting (D-118): the parsed game resources live in fixed slots, at the same address in every process
+        // (D-017), and the state carries only their list, not their contents. The game writes into some of them
+        // (the water levels of a scene's collision, A3). Per slot: its index, path, base, size and a hash of every
+        // 256 bytes, to compare two instances at the same tick; debug.read_resource gives the bytes of a block.
+        std::string path = std::filesystem::absolute(cmd.value("path", std::string("resources.bin"))).string();
+        FILE* f = fopen(path.c_str(), "wb");
+        uint32_t count = 0;
+        uint64_t bytes = 0;
+        if (f != nullptr) {
+            for (auto& sl : ResSlots::ListSlots()) {
+                uint16_t len = (uint16_t)sl.path.size();
+                fwrite(&sl.index, 4, 1, f);
+                fwrite(&len, 2, 1, f);
+                fwrite(sl.path.data(), 1, len, f);
+                fwrite(&sl.base, 8, 1, f);
+                fwrite(&sl.used, 8, 1, f);
+                const uint8_t* p = (const uint8_t*)(uintptr_t)sl.base;
+                for (uint64_t o = 0; o < sl.used; o += 256) {
+                    uint64_t h = 0xCBF29CE484222325ULL;
+                    for (uint64_t k = o; k < sl.used && k < o + 256; k++) {
+                        h ^= p[k];
+                        h *= 0x100000001B3ULL;
+                    }
+                    fwrite(&h, 8, 1, f);
+                }
+                count++;
+                bytes += sl.used;
+            }
+            fclose(f);
+        }
+        req->Reply({ { "ok", f != nullptr }, { "path", path }, { "slots", count }, { "bytes", bytes } });
+    } else if (name == "debug.read_resource") {
+        // The bytes of blocks of resource slots (debug.dump_resources), in hex: "blocks": [[index, offset, length]...]
+        std::map<uint32_t, ResSlots::SlotInfo> slots;
+        for (auto& sl : ResSlots::ListSlots()) {
+            slots[sl.index] = sl;
+        }
+        static const char* digits = "0123456789abcdef";
+        json out = json::array();
+        for (auto& b : cmd.value("blocks", json::array())) {
+            uint32_t index = b[0].get<uint32_t>();
+            uint64_t off = b[1].get<uint64_t>();
+            uint64_t len = std::min<uint64_t>(b[2].get<uint64_t>(), 65536);
+            std::string hex;
+            auto it = slots.find(index);
+            if (it != slots.end()) {
+                const uint8_t* p = (const uint8_t*)(uintptr_t)it->second.base;
+                for (uint64_t k = off; k < it->second.used && k < off + len; k++) {
+                    hex += digits[p[k] >> 4];
+                    hex += digits[p[k] & 15];
+                }
+            }
+            out.push_back(hex);
+        }
+        req->Reply({ { "ok", true }, { "hex", out } });
+    } else if (name == "debug.skeletons") {
+        // (D-118, finding AN) The resource each player's Link draws with (its skeleton places the body parts, the head
+        // and the colliders the simulation reads): the path of the resource slot its skelAnime points into.
+        json out = json::array();
+        if (InPlay() && Zmp_MultiActive()) {
+            auto slots = ResSlots::ListSlots();
+            auto pathOf = [&](const void* p) -> std::string {
+                uint64_t a = (uint64_t)(uintptr_t)p;
+                for (auto& sl : slots) {
+                    if (a >= sl.base && a < sl.base + sl.used) {
+                        return sl.path;
+                    }
+                }
+                return p == nullptr ? "" : "?";
+            };
+            for (int k = 0; k < ZMP_MAX_PLAYERS; k++) {
+                Player* pl = Zmp::Players::SlotPlayer(k);
+                if (pl == nullptr) {
+                    continue;
+                }
+                out.push_back({ { "slot", k },
+                                { "skeleton", pathOf(pl->skelAnime.skeleton) },
+                                { "upper", pathOf(pl->upperSkelAnime.skeleton) } });
+            }
+        }
+        req->Reply({ { "ok", InPlay() }, { "links", out }, { "tick", sFrame } });
+    } else if (name == "debug.water") {
+        // The scene's water boxes (D-118): what the state now carries and hashes.
+        json out = json::array();
+        if (InPlay() && gPlayState->colCtx.colHeader != nullptr &&
+            gPlayState->colCtx.colHeader->waterBoxes != nullptr) {
+            CollisionHeader* col = gPlayState->colCtx.colHeader;
+            for (int i = 0; i < col->numWaterBoxes; i++) {
+                const WaterBox* w = &col->waterBoxes[i];
+                out.push_back({ { "x_min", w->xMin },
+                                { "y_surface", w->ySurface },
+                                { "z_min", w->zMin },
+                                { "x_length", w->xLength },
+                                { "z_length", w->zLength },
+                                { "properties", w->properties } });
+            }
+        }
+        req->Reply({ { "ok", InPlay() }, { "boxes", out }, { "tick", sFrame } });
+    } else if (name == "debug.floor") {
+        // Exploration tool (not simulation): floor heights under a list of points, [[x, y, z], ...].
+        if (!InPlay()) {
+            req->Reply({ { "ok", false }, { "error", "not in play" } });
+        } else {
+            json out = json::array();
+            json exits = json::array();
+            json bgs = json::array();
+            for (auto& pt : cmd.value("points", json::array())) {
+                Vec3f pos = { pt[0].get<float>(), pt[1].get<float>(), pt[2].get<float>() };
+                CollisionPoly* poly = nullptr;
+                s32 bgId = 0;
+                f32 y = BgCheck_EntityRaycastFloor3(&gPlayState->colCtx, &poly, &bgId, &pos);
+                out.push_back(y);
+                // (D-194: the exit index of that floor, 0 for none; and the actor's collision it is, -1 the scene's)
+                exits.push_back(poly != nullptr ? (int)SurfaceType_GetSceneExitIndex(&gPlayState->colCtx, poly, bgId)
+                                                : 0);
+                bgs.push_back(poly != nullptr && bgId != BGCHECK_SCENE ? bgId : -1);
+            }
+            req->Reply({ { "ok", true }, { "floors", out }, { "exits", exits }, { "bg", bgs } });
+        }
+    } else if (name == "query.exits") {
+        // D-194 (bots that walk): the scene's exits in its collision: one per opening, with the exit index, the
+        // entrance it leads to (the scene's exit list) and that entrance's scene. A Link walks onto them (a floor).
+        if (!InPlay()) {
+            req->Reply({ { "ok", false }, { "error", "not in play" } });
+        } else {
+            json list = json::array();
+            for (const auto& g : GroupScenePolys(false)) {
+                json e = PolyGroupJson(g);
+                int entrance = gPlayState->setupExitList != nullptr ? gPlayState->setupExitList[g.key - 1] : -1;
+                e["exit"] = g.key;
+                e["entrance"] = entrance;
+                e["scene"] = (entrance >= 0 && entrance < ENTR_MAX) ? gEntranceTable[entrance].scene : -1;
+                list.push_back(e);
+            }
+            req->Reply({ { "ok", true }, { "scene", gPlayState->sceneNum }, { "exits", list } });
+        }
+    } else if (name == "debug.lines") {
+        // D-194 (bots that walk): does a wall stand between two points? "segments": [[x1, y1, z1, x2, y2, z2], ...]
+        // -> "hits": [bool, ...] (walls of the scene and of actors, one face, as an entity sees them). Read only.
+        if (!InPlay()) {
+            req->Reply({ { "ok", false }, { "error", "not in play" } });
+        } else {
+            json hits = json::array();
+            for (auto& sg : cmd.value("segments", json::array())) {
+                Vec3f a = { sg[0].get<float>(), sg[1].get<float>(), sg[2].get<float>() };
+                Vec3f b = { sg[3].get<float>(), sg[4].get<float>(), sg[5].get<float>() };
+                Vec3f res;
+                CollisionPoly* poly = nullptr;
+                s32 bgId = 0;
+                hits.push_back(BgCheck_EntityLineTest1(&gPlayState->colCtx, &a, &b, &res, &poly, true, false, false,
+                                                       true, &bgId) != 0);
+            }
+            req->Reply({ { "ok", true }, { "hits", hits } });
+        }
+    } else if (name == "query.climbables") {
+        // D-194: the walls a Link climbs (ladders, vines: WALL_FLAG_LADDER, _LADDER_TOP, _CLIMBABLE) or crawls
+        // into (WALL_FLAG_CRAWLSPACE: A in front of the hole), one per wall.
+        if (!InPlay()) {
+            req->Reply({ { "ok", false }, { "error", "not in play" } });
+        } else {
+            json list = json::array();
+            for (const auto& g : GroupScenePolys(true)) {
+                json e = PolyGroupJson(g);
+                e["ladder"] = (g.key & WALL_FLAG_LADDER) != 0;
+                e["ladder_top"] = (g.key & WALL_FLAG_LADDER_TOP) != 0;
+                e["climbable"] = (g.key & WALL_FLAG_CLIMBABLE) != 0;
+                e["crawlspace"] = (g.key & WALL_FLAG_CRAWLSPACE) != 0;
+                list.push_back(e);
+            }
+            req->Reply({ { "ok", true }, { "climbables", list } });
+        }
+    } else if (name == "query.doors") {
+        // D-194: the door actors of the scene (loaded rooms): En_Door (type, scene exit, locked by a small key) and
+        // Door_Shutter (type, open by its flag). A Link opens an En_Door with A in front of it; a shutter by walking.
+        if (!InPlay()) {
+            req->Reply({ { "ok", false }, { "error", "not in play" } });
+        } else {
+            json list = json::array();
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_DOOR].head; a != nullptr; a = a->next) {
+                int flag = a->params & 0x3F;
+                json d = { { "id", a->id },
+                           { "params", (u16)a->params },
+                           { "pos", Vec3(a->world.pos) },
+                           { "rot_y", a->shape.rot.y },
+                           { "room", a->room },
+                           { "flag_set", Flags_GetSwitch(gPlayState, flag) != 0 } };
+                if (a->id == ACTOR_EN_DOOR) {
+                    int type = (a->params >> 7) & 7;
+                    d["kind"] = "en_door";
+                    d["type"] = type;
+                    d["scene_exit"] = type == 3;
+                    d["locked"] = type == 1 && !Flags_GetSwitch(gPlayState, flag);
+                    d["evening"] = type == 6;
+                } else if (a->id == ACTOR_DOOR_SHUTTER) {
+                    int type = (a->params >> 6) & 0xF;
+                    d["kind"] = "shutter";
+                    d["type"] = type;
+                    d["locked"] = (type == 0x0B || type == 0x05) && !Flags_GetSwitch(gPlayState, flag);
+                } else {
+                    d["kind"] = "other";
+                }
+                list.push_back(d);
+            }
+            req->Reply({ { "ok", true }, { "doors", list } });
+        }
+    } else if (name == "debug.spawn_spots") {
+        // Diagnosis (finding AI): the spawn candidates next to the group's entrance for a slot, and their checks.
+        if (!InPlay() || !Zmp_MultiActive()) {
+            req->Reply({ { "ok", false }, { "error", "not in a multiplayer game" } });
+        } else {
+            json out = json::array();
+            for (const auto& c : Zmp::Players::DebugSpawnSpots(cmd.value("slot", 1), cmd.value("n", 1))) {
+                out.push_back({ { "pos", json::array({ c.x, c.y, c.z }) },
+                                { "floor", c.floor },
+                                { "reach", c.reach },
+                                { "walls", c.walls },
+                                { "edges", c.edges },
+                                { "free", c.free } });
+            }
+            req->Reply({ { "ok", true }, { "spots", out } });
+        }
+    } else if (name == "debug.teleport") {
+        // Exploration tool: puts the player exactly at a position (never used in recordings).
+        // In lockstep tests every instance applies the same teleport at the same paused tick (slot = player).
+        Player* pl = nullptr;
+        if (InPlay()) {
+            pl = (Zmp_MultiActive() && cmd.contains("slot")) ? Zmp::Players::SlotPlayer(cmd["slot"].get<int>())
+                                                             : GET_PLAYER(gPlayState);
+        }
+        if (pl == nullptr) {
+            req->Reply({ { "ok", false }, { "error", "not in play or no such player" } });
+        } else {
+            Vec3f pos = { cmd["pos"][0].get<float>(), cmd["pos"][1].get<float>(), cmd["pos"][2].get<float>() };
+            pl->actor.world.pos = pos;
+            pl->actor.prevPos = pos;
+            pl->actor.home.pos = pos;
+            if (cmd.contains("yaw")) {
+                pl->actor.shape.rot.y = pl->actor.world.rot.y = pl->yaw = (s16)cmd["yaw"].get<int>();
+            }
+            req->Reply({ { "ok", true } });
+        }
+    } else if (name == "debug.set_actor_health") {
+        std::string err;
+        bool ok =
+            Sim::DebugSetActorHealth(cmd.value("category", 5), cmd.value("index", 0), cmd.value("health", 0), &err);
+        req->Reply({ { "ok", ok }, { "error", err } });
+    } else if (name == "debug.crash") {
+        // A test instance that crashes on purpose (an invalid write on the game thread), to test what it leaves behind.
+        req->Reply({ { "ok", true } });
+        volatile int* nowhere = nullptr;
+        *nowhere = 1;
+    } else if (name == "debug.naming_stall") {
+        // The game thread names statics for a while without starting a frame (finding X).
+        int named = Zmp::State::TestNamingStall(cmd.value("ms", 7000));
+        req->Reply({ { "ok", true }, { "named", named } });
+    } else if (name == "debug.resource_race") {
+        // Several threads load resources for the first time at once (finding T).
+        ZmpResourceRace r = {};
+        Zmp_TestResourceRace(cmd.value("threads", 4), cmd.value("made", 20000), &r);
+        req->Reply({ { "ok", true },
+                     { "loads", r.loads },
+                     { "wrote", r.wrote },
+                     { "made", r.made },
+                     { "lost", r.lost },
+                     { "phantom", r.phantom },
+                     { "left", r.left },
+                     { "held", r.held } });
+    } else if (name == "debug.late_inputs") {
+        // A machine whose input is late on purpose: it sends none for hold_ms, and its game stands still for
+        // freeze_ms first (then it plays the ticks it already has, and reports their hashes, with no input sent yet).
+        Zmp::Lockstep::TestHoldInputs(cmd.value("hold_ms", 0));
+        std::this_thread::sleep_for(std::chrono::milliseconds(cmd.value("freeze_ms", 0)));
+        req->Reply({ { "ok", true } });
+    } else if (name == "debug.frame_cost") {
+        // Every frame of this machine costs `us` microseconds more, spent after drawing it (D-101: a PC or GPU busy
+        // with something else).
+        Zmp::Lockstep::TestFrameCost(cmd.value("us", 0), cmd.value("sleep", false));
+        req->Reply({ { "ok", true } });
+    } else if (name == "debug.hold_shared") {
+        // This machine keeps the patches of the shared game it would send until told to let them go (A of p19: two
+        // groups that change the same thing before either knows).
+        size_t held = Zmp::Lockstep::TestHoldShared(cmd.value("hold", false));
+        req->Reply({ { "ok", true }, { "held", held } });
+    } else if (name == "debug.tick_view_lag") {
+        // This machine decides its inputs as if the group's ticks reached it `ticks` ticks late (D-094).
+        Zmp::Lockstep::TestTickViewLag(cmd.value("ticks", 0));
+        req->Reply({ { "ok", true } });
+    } else if (name == "screenshot") {
+        std::string path = cmd.value("path", std::string("screenshot.png"));
+        path = std::filesystem::absolute(path).string();
+        PendingShot shot;
+        shot.req = req;
+        shot.path = path;
+        int cw = cmd.value("width", CVarGetInteger(ZMP_CVAR_TEST_CAPTURE_W, 0));
+        int ch = cmd.value("height", CVarGetInteger(ZMP_CVAR_TEST_CAPTURE_H, 0));
+        // "tick": the picture of that simulation tick (several instances asked for the same tick show the same
+        // moment, whatever the speed of the clock).
+        shot.afterTick = cmd.value("tick", 0u);
+        if (!sShots.empty()) {
+            shot.frames = sShots.back().frames + 1; // (the window is already at the capture's size)
+            sShots.push_back(shot);
+        } else if (ResizeForCapture(cw, ch, &shot.restore)) {
+            shot.frames = 4;
+            sShots.push_back(shot);
+        } else {
+            shot.frames = 1; // (the next frame: D-102)
+            sShots.push_back(shot);
+        }
+    } else if (name == "wait.tick" || name == "wait.stable" || name == "wait.scene" || name == "wait.state" ||
+               name == "wait.sim_tick" || name == "wait.replay_end") {
+        Wait w;
+        w.req = req;
+        w.deadline = Deadline(cmd);
+        if (name == "wait.tick") {
+            w.kind = WaitKind::Tick;
+            w.targetTick = cmd.value("tick", 0u);
+        } else if (name == "wait.stable") {
+            w.kind = WaitKind::Stable;
+            w.targetTick = sFrame + cmd.value("frames", 1u);
+        } else if (name == "wait.sim_tick") {
+            w.kind = WaitKind::SimTick;
+            w.targetTick = cmd.value("tick", 0u);
+        } else if (name == "wait.replay_end") {
+            w.kind = WaitKind::ReplayEnd;
+        } else if (name == "wait.scene") {
+            w.kind = WaitKind::Scene;
+            w.scene = cmd.value("scene", -1);
+        } else {
+            w.kind = WaitKind::GameState;
+            w.gameState = cmd.value("state", std::string());
+        }
+        sWaits.push_back(w);
+    } else if (name == "game.new") {
+        if (gGameState == nullptr) {
+            req->Reply({ { "ok", false }, { "error", "no game state" } });
+        } else {
+            Sim::StartSpec spec;
+            spec.entrance = cmd.value("entrance", 0x0EE);
+            spec.adult = cmd.value("age", std::string("child")) == "adult";
+            spec.dayTime = (uint16_t)cmd.value("day_time", 0x8000); // noon by default
+            Sim::StartDebugGame(spec);
+            req->Reply({ { "ok", true }, { "tick", sFrame } });
+        }
+    } else if (name == "cvar.get") {
+        std::string var = cmd.value("name", std::string());
+        auto cv = Ship::Context::GetRawInstance()->GetConsoleVariables()->Get(var.c_str());
+        if (cv == nullptr) {
+            req->Reply({ { "ok", true }, { "name", var }, { "value", nullptr } });
+        } else if (cv->Type == Ship::ConsoleVariableType::Integer) {
+            req->Reply({ { "ok", true }, { "name", var }, { "value", cv->Integer } });
+        } else if (cv->Type == Ship::ConsoleVariableType::Float) {
+            req->Reply({ { "ok", true }, { "name", var }, { "value", cv->Float } });
+        } else if (cv->Type == Ship::ConsoleVariableType::String) {
+            req->Reply({ { "ok", true }, { "name", var }, { "value", cv->String ? cv->String : "" } });
+        } else {
+            req->Reply({ { "ok", false }, { "error", "unsupported cvar type" } });
+        }
+    } else if (name == "cvar.set" && CVarProfile::Active() && CVarProfile::IsLocked(cmd.value("name", std::string()))) {
+        req->Reply(
+            { { "ok", false }, { "error", "locked CVar during a ZMP session: " + cmd.value("name", std::string()) } });
+    } else if (name == "cvar.set") {
+        std::string var = cmd.value("name", std::string());
+        const json& v = cmd.contains("value") ? cmd["value"] : json();
+        if (v.is_number_integer() || v.is_boolean()) {
+            CVarSetInteger(var.c_str(), v.is_boolean() ? (v.get<bool>() ? 1 : 0) : v.get<int32_t>());
+        } else if (v.is_number_float()) {
+            CVarSetFloat(var.c_str(), v.get<float>());
+        } else if (v.is_string()) {
+            CVarSetString(var.c_str(), v.get<std::string>().c_str());
+        } else {
+            CVarClear(var.c_str());
+        }
+        req->Reply({ { "ok", true } });
+    } else if (name == "net.status") {
+        req->Reply(NetStatusJson());
+    } else if (name == "net.connect") {
+        std::string host = cmd.value("host", std::string(CVarGetString("gZmp.Server.Host", "127.0.0.1")));
+        uint16_t port = (uint16_t)cmd.value("port", CVarGetInteger("gZmp.Server.Port", 47100));
+        std::string room = cmd.value("room", std::string(CVarGetString("gZmp.Room", "zmp")));
+        std::string pname = cmd.value("name", std::string(CVarGetString("gZmp.Name", "Player")));
+        Zmp::Client::Get().Connect(host, port, room, pname);
+        req->Reply({ { "ok", true } });
+    } else if (name == "net.event") {
+        Zmp::Lockstep::SendConsoleEvent(cmd.value("line", std::string()));
+        req->Reply({ { "ok", true } });
+    } else if (name == "net.leave") {
+        Zmp::Lockstep::Leave();
+        req->Reply({ { "ok", true } });
+    } else if (name == "net.disconnect") {
+        Zmp::Client::Get().Disconnect();
+        req->Reply({ { "ok", true } });
+    } else if (name == "quit") {
+        sQuitRequested = true;
+        req->Reply({ { "ok", true }, { "tick", sFrame } });
+    } else {
+        req->Reply({ { "ok", false }, { "error", "unknown command '" + name + "'" } });
+    }
+}
+
+static void UpdateWaits() {
+    auto now = std::chrono::steady_clock::now();
+    for (auto it = sWaits.begin(); it != sWaits.end();) {
+        bool done = false;
+        switch (it->kind) {
+            case WaitKind::Tick:
+            case WaitKind::Stable:
+                done = sFrame >= it->targetTick;
+                break;
+            case WaitKind::Scene:
+                // Require the condition on two consecutive frames so the scene has settled.
+                it->satisfiedFrames = SceneReady(it->scene) ? it->satisfiedFrames + 1 : 0;
+                done = it->satisfiedFrames >= 2;
+                break;
+            case WaitKind::GameState:
+                it->satisfiedFrames = GameStateName() == it->gameState ? it->satisfiedFrames + 1 : 0;
+                done = it->satisfiedFrames >= 2;
+                break;
+            case WaitKind::SimTick:
+                done = Sim::CurrentTick() >= it->targetTick;
+                break;
+            case WaitKind::ReplayEnd: {
+                auto st = Sim::GetStatus();
+                done = st.mode != Sim::Mode::Replaying || st.replayFinished;
+                break;
+            }
+        }
+        if (done) {
+            it->req->Reply({ { "ok", true }, { "tick", sFrame }, { "sim_tick", Sim::CurrentTick() } });
+            it = sWaits.erase(it);
+        } else if (now > it->deadline) {
+            it->req->Reply({ { "ok", false },
+                             { "error", "timeout" },
+                             { "tick", sFrame },
+                             { "state", GameStateName() },
+                             { "scene", InPlay() ? gPlayState->sceneNum : -1 } });
+            it = sWaits.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+static void UpdateShots() {
+    for (auto it = sShots.begin(); it != sShots.end();) {
+        if (it->frameId != 0) {
+            // D-102 (finding AD): the picture is the frame this process drew, copied before it was presented; the
+            // desktop (which windows it shows, the compositor, the monitors) has no say in it.
+            bool ok = false;
+            int w = 0, h = 0;
+            std::string info;
+            if (!FrameCaptureResult(it->frameId, &ok, &w, &h, &info)) {
+                ++it; // (not presented yet)
+                continue;
+            }
+            if (ok) {
+                it->req->Reply(
+                    { { "ok", true }, { "path", it->path }, { "width", w }, { "height", h }, { "method", info } });
+            } else {
+                Log("harness: the frame could not be captured (" + info + "); capturing the window");
+                TakeShot(it->req, it->path);
+            }
+        } else if (--it->frames > 0 || (it->afterTick != 0 && Sim::CurrentTick() <= it->afterTick)) {
+            ++it;
+            continue;
+        } else if (FrameCaptureAvailable() && !Zmp_TestMutant("captura_por_ventana")) {
+            it->frameId = RequestFrameCapture(it->path);
+            ++it;
+            continue;
+        } else {
+            TakeShot(it->req, it->path); // (no frame presented through DXGI: OpenGL)
+        }
+        CaptureRestore restore = it->restore;
+        it = sShots.erase(it);
+        if (sShots.empty()) {
+            RestoreAfterCapture(restore);
+        } else if (restore.valid) {
+            sShots.front().restore = restore; // (whoever is last puts the window back)
+        }
+    }
+}
+
+void OnFrameBegin(uint32_t tick) {
+    UpdateShots();
+    // Wall time between two RunFrame iterations (one logic tick each): mean (EMA) and worst since the last query.
+    {
+        static std::chrono::steady_clock::time_point last;
+        auto now = std::chrono::steady_clock::now();
+        if (last.time_since_epoch().count() != 0) {
+            float ms = std::chrono::duration<float, std::milli>(now - last).count();
+            sFrameIntervalMs = sFrameIntervalMs == 0.0f ? ms : sFrameIntervalMs * 0.98f + ms * 0.02f;
+            sFrameIntervalMaxMs = std::max(sFrameIntervalMaxMs, ms);
+            if (ms > 90.0f && sFrame > 0) {
+                // (diagnosis of pauses, phase 5b: what was going on is in the lines around this one)
+                Zmp::Log("harness: slow frame, " + std::to_string((int)ms) + " ms before tick " +
+                         std::to_string(Sim::CurrentTick()));
+            }
+        }
+        last = now;
+        uint32_t simTick = Sim::CurrentTick();
+        // Only the ticks of a player who is playing count: not its own scene changes (its fade, its catch-up when it
+        // enters a group), which are its own and hold nobody else.
+        {
+            auto lst = Zmp::Lockstep::GetStatus();
+            bool playing = lst.phase != Zmp::Lockstep::Phase::Running ||
+                           (!lst.covered && !lst.catchingUp && Zmp::Players::IsPresent(lst.slot));
+            if (lst.phase != Zmp::Lockstep::Phase::Running && lst.phase != Zmp::Lockstep::Phase::Idle) {
+                playing = false; // detached / joining
+            }
+            sGapSettled = playing ? std::min(sGapSettled + 1, 1000) : 0;
+            if (sGapSettled < 20) {
+                sGapValid = false;
+            }
+        }
+        {
+            float waited =
+                (float)Zmp::Lockstep::GateWaitMs(); // (read every frame: waits of its own scene changes are dropped)
+            if (sGapSettled >= 20) {
+                sGateWaitMaxMs = std::max(sGateWaitMaxMs, waited);
+            }
+        }
+        if (sGapSettled < 20) {
+        } else if (!sGapValid || simTick < sGapLastTick) {
+            sGapValid = true;
+            sGapLastTick = simTick;
+            sGapLastAt = now;
+        } else if (simTick != sGapLastTick) {
+            // (a client catching up runs several ticks per frame: each gap is the frame's time shared out)
+            float ms = std::chrono::duration<float, std::milli>(now - sGapLastAt).count();
+            if (sTickGaps.size() < 400000) {
+                sTickGaps.push_back(ms);
+            }
+            sGapLastTick = simTick;
+            sGapLastAt = now;
+        }
+    }
+    sFrame = tick;
+    for (auto& req : TakeRequests()) {
+        try {
+            Dispatch(req);
+        } catch (const std::exception& e) {
+            req->Reply({ { "ok", false }, { "error", std::string("exception: ") + e.what() } });
+        }
+    }
+    UpdateWaits();
+    if (sQuitRequested) {
+        sQuitRequested = false;
+        Log("harness: quit requested");
+        Ship::Context::GetRawInstance()->GetWindow()->Close();
+    }
+}
+
+void ApplyInput(void* padsV) {
+    ApplyScriptInput((OSContPad*)padsV);
+}
+
+void ScriptStepRead() {
+    if (sScriptActive) {
+        sStepRead = true;
+    }
+}
+
+bool ScriptPadForSend(uint32_t* buttons, int8_t* stickX, int8_t* stickY, int8_t* rStickX, int8_t* rStickY) {
+    if (!sScriptActive || !ScriptBySend() || !ScriptGoesToTheGroup()) {
+        return false;
+    }
+    const PadStep& step = sScript.front();
+    *buttons = step.buttons;
+    *stickX = step.stickX;
+    *stickY = step.stickY;
+    *rStickX = step.rStickX;
+    *rStickY = step.rStickY;
+    AdvanceScript();
+    return true;
+}
+
+} // namespace Zmp::Harness
+
+#endif

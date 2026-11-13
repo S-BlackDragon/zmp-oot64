@@ -1,4 +1,5 @@
 #include "global.h"
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
 #include "message_data_static.h"
 #include "vt.h"
 
@@ -73,6 +74,11 @@ s16 sTextboxBackgroundYOffsets[] = {
 
 // original name: onpu_buff
 static u8 sOcarinaButtonIndexBuf[12] = { 0 };
+
+// ZMP: at file scope (they were function statics) because each player's text box has its own (Message_ZmpStatics)
+static s16 sAnalogStickHeld = false;
+static u8 D_80153D74 = 0;
+static u16 D_80153D78 = 0;
 
 s16 sOcarinaNotesAlphaValues[9] = { 0 };
 
@@ -197,7 +203,6 @@ void Message_CloseTextbox(PlayState* play) {
 }
 
 void Message_HandleChoiceSelection(PlayState* play, u8 numChoices) {
-    static s16 sAnalogStickHeld = false;
     MessageContext* msgCtx = &play->msgCtx;
     Input* input = &play->state.input[0];
     bool dpad = CVarGetInteger(CVAR_SETTING("DpadInText"), 0);
@@ -577,6 +582,14 @@ void Message_SetTextColor(MessageContext* msgCtx, u16 colorParameter) {
     Cosmetics_MaybeSetTextColor(msgCtx, colorParameter);
 }
 
+// ZMP (family 1, D-116): the flashing of the "next" icon of a text box, only drawing reads and writes it (this PC's own
+// text box). Statics of Message_DrawTextboxIcon before; at file scope with a name, so that the hunt for statics can
+// tell what they are (unnamed, the code that touches them could not be told apart from its neighbours').
+static Color_RGB8 sTextboxIconPrim = { 0, 80, 200 };
+static s16 sTextboxIconFlashTimer = 12;
+static s16 sTextboxIconFlashColorIdx = 0;
+static Color_RGB8 sTextboxIconEnv = { 0, 0, 0 };
+
 void Message_DrawTextboxIcon(PlayState* play, Gfx** p, s16 x, s16 y) {
     // SoH [Cosmetics] The following Color_RGB8 were originally static
     Color_RGB8 sIconPrimColors[2] = {
@@ -599,10 +612,10 @@ void Message_DrawTextboxIcon(PlayState* play, Gfx** p, s16 x, s16 y) {
         sIconPrimColors[1] = (Color_RGB8){ 50, 255, 130 };
         sIconEnvColors[1] = (Color_RGB8){ 50, 255, 130 };
     }
-    static Color_RGB8 sIconPrim = { 0, 80, 200 };
-    static s16 sIconFlashTimer = 12;
-    static s16 sIconFlashColorIdx = 0;
-    static Color_RGB8 sIconEnv = { 0, 0, 0 };
+#define sIconPrim sTextboxIconPrim // ZMP: file statics now (D-116)
+#define sIconFlashTimer sTextboxIconFlashTimer
+#define sIconFlashColorIdx sTextboxIconFlashColorIdx
+#define sIconEnv sTextboxIconEnv
     MessageContext* msgCtx = &play->msgCtx;
     Font* font = &msgCtx->font;
     Gfx* gfx = *p;
@@ -690,6 +703,10 @@ void Message_DrawTextboxIcon(PlayState* play, Gfx** p, s16 x, s16 y) {
 
     *p = gfx;
 }
+#undef sIconPrim
+#undef sIconFlashTimer
+#undef sIconFlashColorIdx
+#undef sIconEnv
 
 f32 sFontWidths[144] = {
     8.0f,  // ' '
@@ -2914,6 +2931,7 @@ void Message_StartOcarina(PlayState* play, u16 ocarinaActionId) {
     s16 noStop;
     s32 k;
 
+    Zmp_OnMessageStart(); // ZMP: (each player has its own ocarina, phase 5b)
     osSyncPrintf(VT_FGCOL(GREEN));
 
     for (i = sOcarinaSongBitFlags = 0; i < (QUEST_KOKIRI_EMERALD - QUEST_SONG_MINUET); i++) {
@@ -3764,7 +3782,7 @@ void Message_DrawMain(PlayState* play, Gfx** p) {
                     } else {
                         Message_CloseTextbox(play);
                         if (msgCtx->lastPlayedSong == OCARINA_SONG_EPONAS) {
-                            DREG(53) = 1;
+                            Zmp_EponaCalled(play); // ZMP (D-233): DREG(53) and this player's own call
                         }
                         osSyncPrintf(VT_FGCOL(YELLOW));
                         osSyncPrintf("☆☆☆ocarina=%d   message->ocarina_no=%d  ", msgCtx->lastPlayedSong,
@@ -4392,8 +4410,6 @@ void Message_Update(PlayState* play) {
         0x0400, 0x0400, 0x0200, 0x0000, 0x1038, 0x0008, 0x200A, 0x088B, 0x0007, 0x0009, 0x000A, 0x107E, 0x2008, 0x2007,
         0x0015, 0x0016, 0x0017, 0x0003, 0x0000, 0x270B, 0x00C8, 0x012C, 0x012D, 0xFFDA, 0x0014, 0x0016, 0x0014, 0x0016,
     };
-    static u8 D_80153D74 = 0;
-    static u16 D_80153D78 = 0;
     MessageContext* msgCtx = &play->msgCtx;
     InterfaceContext* interfaceCtx = &play->interfaceCtx;
     Player* player = GET_PLAYER(play);
@@ -4678,7 +4694,9 @@ void Message_Update(PlayState* play) {
                     //       Later, if the ocarina has not been played and another textbox is closed, this handling
                     //       for Saria's song will be carried out.
                     player->naviTextId = -0xE0;
-                    player->naviActor->flags |= 0x10000;
+                    if (player->naviActor != NULL) { // ZMP (D-235): a Link without Navi
+                        player->naviActor->flags |= 0x10000;
+                    }
                 }
                 if (msgCtx->ocarinaAction == OCARINA_ACTION_FREE_PLAY_DONE &&
                     (play->msgCtx.ocarinaMode == OCARINA_MODE_01 || play->msgCtx.ocarinaMode == OCARINA_MODE_0B)) {
@@ -4730,3 +4748,48 @@ s16 gGameOverTimer = 0;
     F(sOcarinaSongBitFlags)                  \
     F(gGameOverTimer)
 SHIP_SAVESTATE_DEFINE(MessagePAL, MESSAGE_PAL_SHIP_SAVESTATE_FIELDS)
+
+// ZMP: the rest of the text box statics that the text's progress depends on (a player who joins a group while a text
+// box is open gets the group's values with its state, phase 5).
+#define MESSAGE_ZMP_SAVESTATE_FIELDS(F) \
+    F(sDisplayNextMessageAsEnglish) F(sLastLanguage) F(sTextBoxNum) F(sTextFade) F(sTextIsCredits) F(D_8014B30C)
+SHIP_SAVESTATE_DEFINE(MessageZmp, MESSAGE_ZMP_SAVESTATE_FIELDS)
+
+// ZMP: one text box per player (phase 5b). The statics above that belong to one text box are saved and restored
+// together with the message context when the simulation changes of player (ZMP_MSG_STATICS_SIZE bytes are enough).
+// clang-format off (its layout of this list is different on every run)
+#define MESSAGE_ZMP_SLOT_FIELDS(F)  \
+    F(sDisplayNextMessageAsEnglish) \
+    F(sLastLanguage)                \
+    F(sTextBoxNum)                  \
+    F(sTextFade)                    \
+    F(sMessageStartFrameCount)      \
+    F(sOcarinaButtonIndexBufPos)    \
+    F(sOcarinaButtonIndexBufLen)    \
+    F(sTextboxSkipped)              \
+    F(sNextTextId)                  \
+    F(sTextIsCredits)               \
+    F(D_8014B30C)                   \
+    F(sLastPlayedSong)              \
+    F(sHasSunsSong)                 \
+    F(sMessageHasSetSfx)            \
+    F(sOcarinaSongBitFlags)         \
+    F(sOcarinaButtonIndexBuf)       \
+    F(sOcarinaNotesAlphaValues)     \
+    F(sAnalogStickHeld)             \
+    F(D_80153D74)                   \
+    F(D_80153D78)
+// clang-format on
+
+void Message_ZmpStatics(u8* buf, s32 load) {
+    u8* p = buf;
+#define MESSAGE_ZMP_SLOT_COPY(x)  \
+    if (load) {                   \
+        memcpy(&x, p, sizeof(x)); \
+    } else {                      \
+        memcpy(p, &x, sizeof(x)); \
+    }                             \
+    p += sizeof(x);
+    MESSAGE_ZMP_SLOT_FIELDS(MESSAGE_ZMP_SLOT_COPY)
+#undef MESSAGE_ZMP_SLOT_COPY
+}

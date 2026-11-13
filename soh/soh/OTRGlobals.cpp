@@ -9,6 +9,9 @@
 #include <optional>
 #include <spdlog/common.h>
 #include <imgui.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include "ResourceManagerHelpers.h"
 #include <fast/Fast3dWindow.h>
@@ -83,6 +86,10 @@
 #include "soh/Network/CrowdControl/CrowdControl.h"
 #include "soh/Network/Sail/Sail.h"
 #include "soh/Network/Anchor/Anchor.h"
+#include "soh/Zmp/Zmp.h"                 // ZMP
+#include "soh/Zmp/Test/Mutants.h"        // ZMP
+#include "soh/Zmp/Sim/ZmpSim.h"          // ZMP
+#include "soh/Zmp/State/ResourceSlots.h" // ZMP
 #include "Enhancements/game-interactor/GameInteractor.h"
 #include "Enhancements/randomizer/draw.h"
 #include <libultraship/controller/controldeck/ControlDeck.h>
@@ -273,6 +280,13 @@ static bool VerifyArchiveVersion(OTRVersion version);
 std::string portArchivePath = "";
 static bool sohArchiveVersionMatch = false;
 
+// ZMP: finding R (the field is protected: a derived class may name it)
+struct ZmpGuiAccess : Fast::Fast3dGui {
+    static auto& Impl(Fast::Fast3dGui& gui) {
+        return gui.*(&ZmpGuiAccess::mImpl);
+    }
+};
+
 OTRGlobals::OTRGlobals() {
     context = Ship::Context::CreateUninitializedInstance("Ship of Harkinian", appShortName, "shipofharkinian.json");
 
@@ -299,13 +313,28 @@ OTRGlobals::OTRGlobals() {
     }));
     context->InitControlDeck(controlDeck);
     context->InitResourceManager({ portArchivePath }, {}, 3, true);
+    Zmp_BootMark("boot: archive ready"); // ZMP: finding R
     context->InitConsole();
 
     auto sohInputEditorWindow =
         std::make_shared<SohInputEditorWindow>(CVAR_WINDOW("ControllerConfiguration"), "Configure Controller");
     sohFast3dWindow =
         std::make_shared<Fast::Fast3dWindow>(std::vector<std::shared_ptr<Ship::GuiWindow>>({ sohInputEditorWindow }));
+    // ZMP: finding R. The window object keeps a "which backend" field that nobody sets until the graphics device
+    // exists, and the window procedure reads it for every message Windows sends while the window is being created.
+    // It used to hold whatever was in that memory: when that happened to be the number of an SDL backend, the DirectX
+    // window handed a window handle to SDL as if it were an event and the game closed while starting (exit code
+    // 0xC000041D, about 2 starts in 1000). The library now starts it at zero (libultraship/VENDORED.md); the boot
+    // log says what it holds here.
+    if (auto zmpGui = std::dynamic_pointer_cast<Fast::Fast3dGui>(sohFast3dWindow->GetGui())) {
+        if (Zmp_TestMutant("gui_sin_iniciar")) { // (mutation test: the value it held in the starts that died)
+            ZmpGuiAccess::Impl(*zmpGui).Backend = Fast::FAST3D_SDL_OPENGL;
+        }
+        Zmp_BootGuiBackendField((int)ZmpGuiAccess::Impl(*zmpGui).Backend);
+    }
+    Zmp_BootMark("boot: window and graphics device next"); // ZMP: finding R
     context->InitWindow(sohFast3dWindow);
+    Zmp_BootMark("boot: window and graphics device ready"); // ZMP: finding R
 
     SohGui::SetupMenu();
 
@@ -841,6 +870,7 @@ void OTRGlobals::Initialize() {
     // tell LUS to reserve 3 SoH specific threads (Game, Audio, Save)
     prevAltAssets = CVarGetInteger(CVAR_SETTING("AltAssets"), 1);
     context->GetResourceManager()->SetAltAssetsEnabled(prevAltAssets);
+    Zmp_ResourceTestSetup(); // ZMP: finding T (test builds: the mutants of the library's fixes)
 
     context->InitCrashHandler();
 
@@ -862,60 +892,77 @@ void OTRGlobals::Initialize() {
                 (char*)gGitBranch, (char*)gGitCommitHash);
 
     auto loader = context->GetResourceManager()->GetResourceLoader();
-    loader->RegisterResourceFactory(std::make_shared<Fast::ResourceFactoryBinaryTextureV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Texture", static_cast<uint32_t>(Fast::ResourceType::Texture), 0);
-    loader->RegisterResourceFactory(std::make_shared<Fast::ResourceFactoryBinaryTextureV1>(), RESOURCE_FORMAT_BINARY,
-                                    "Texture", static_cast<uint32_t>(Fast::ResourceType::Texture), 1);
-    loader->RegisterResourceFactory(std::make_shared<Fast::ResourceFactoryBinaryVertexV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Vertex", static_cast<uint32_t>(Fast::ResourceType::Vertex), 0);
-    loader->RegisterResourceFactory(std::make_shared<Fast::ResourceFactoryXMLVertexV0>(), RESOURCE_FORMAT_XML, "Vertex",
-                                    static_cast<uint32_t>(Fast::ResourceType::Vertex), 0);
-    loader->RegisterResourceFactory(std::make_shared<Fast::ResourceFactoryBinaryDisplayListV0>(),
+    // ZMP: game resources are parsed at a deterministic address (Zmp/State/ResourceSlots.h); audio is local
+    // to each client and keeps the normal allocator.
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<Fast::ResourceFactoryBinaryTextureV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Texture",
+                                    static_cast<uint32_t>(Fast::ResourceType::Texture), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<Fast::ResourceFactoryBinaryTextureV1>()),
+                                    RESOURCE_FORMAT_BINARY, "Texture",
+                                    static_cast<uint32_t>(Fast::ResourceType::Texture), 1);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<Fast::ResourceFactoryBinaryVertexV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Vertex", static_cast<uint32_t>(Fast::ResourceType::Vertex),
+                                    0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<Fast::ResourceFactoryXMLVertexV0>()),
+                                    RESOURCE_FORMAT_XML, "Vertex", static_cast<uint32_t>(Fast::ResourceType::Vertex),
+                                    0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<Fast::ResourceFactoryBinaryDisplayListV0>()),
                                     RESOURCE_FORMAT_BINARY, "DisplayList",
                                     static_cast<uint32_t>(Fast::ResourceType::DisplayList), 0);
-    loader->RegisterResourceFactory(std::make_shared<Fast::ResourceFactoryXMLDisplayListV0>(), RESOURCE_FORMAT_XML,
-                                    "DisplayList", static_cast<uint32_t>(Fast::ResourceType::DisplayList), 0);
-    loader->RegisterResourceFactory(std::make_shared<Fast::ResourceFactoryBinaryMatrixV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Matrix", static_cast<uint32_t>(Fast::ResourceType::Matrix), 0);
-    loader->RegisterResourceFactory(std::make_shared<Ship::ResourceFactoryBinaryBlobV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Blob", static_cast<uint32_t>(Ship::ResourceType::Blob), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryArrayV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Array", static_cast<uint32_t>(SOH::ResourceType::SOH_Array), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryAnimationV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Animation", static_cast<uint32_t>(SOH::ResourceType::SOH_Animation), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryPlayerAnimationV0>(),
-                                    RESOURCE_FORMAT_BINARY, "PlayerAnimation",
-                                    static_cast<uint32_t>(SOH::ResourceType::SOH_PlayerAnimation), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinarySceneV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Room", static_cast<uint32_t>(SOH::ResourceType::SOH_Room),
-                                    0); // Is room scene? maybe?
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryXMLSceneV0>(), RESOURCE_FORMAT_XML, "Room",
-                                    static_cast<uint32_t>(SOH::ResourceType::SOH_Room), 0); // Is room scene? maybe?
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryCollisionHeaderV0>(),
-                                    RESOURCE_FORMAT_BINARY, "CollisionHeader",
-                                    static_cast<uint32_t>(SOH::ResourceType::SOH_CollisionHeader), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryXMLCollisionHeaderV0>(), RESOURCE_FORMAT_XML,
-                                    "CollisionHeader", static_cast<uint32_t>(SOH::ResourceType::SOH_CollisionHeader),
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<Fast::ResourceFactoryXMLDisplayListV0>()),
+                                    RESOURCE_FORMAT_XML, "DisplayList",
+                                    static_cast<uint32_t>(Fast::ResourceType::DisplayList), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<Fast::ResourceFactoryBinaryMatrixV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Matrix", static_cast<uint32_t>(Fast::ResourceType::Matrix),
                                     0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinarySkeletonV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Skeleton", static_cast<uint32_t>(SOH::ResourceType::SOH_Skeleton), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryXMLSkeletonV0>(), RESOURCE_FORMAT_XML,
-                                    "Skeleton", static_cast<uint32_t>(SOH::ResourceType::SOH_Skeleton), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinarySkeletonLimbV0>(),
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<Ship::ResourceFactoryBinaryBlobV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Blob", static_cast<uint32_t>(Ship::ResourceType::Blob), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryBinaryArrayV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Array",
+                                    static_cast<uint32_t>(SOH::ResourceType::SOH_Array), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryBinaryAnimationV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Animation",
+                                    static_cast<uint32_t>(SOH::ResourceType::SOH_Animation), 0);
+    loader->RegisterResourceFactory(
+        Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryBinaryPlayerAnimationV0>()), RESOURCE_FORMAT_BINARY,
+        "PlayerAnimation", static_cast<uint32_t>(SOH::ResourceType::SOH_PlayerAnimation), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryBinarySceneV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Room", static_cast<uint32_t>(SOH::ResourceType::SOH_Room),
+                                    0); // Is room scene? maybe?
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryXMLSceneV0>()),
+                                    RESOURCE_FORMAT_XML, "Room", static_cast<uint32_t>(SOH::ResourceType::SOH_Room),
+                                    0); // Is room scene? maybe?
+    loader->RegisterResourceFactory(
+        Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryBinaryCollisionHeaderV0>()), RESOURCE_FORMAT_BINARY,
+        "CollisionHeader", static_cast<uint32_t>(SOH::ResourceType::SOH_CollisionHeader), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryXMLCollisionHeaderV0>()),
+                                    RESOURCE_FORMAT_XML, "CollisionHeader",
+                                    static_cast<uint32_t>(SOH::ResourceType::SOH_CollisionHeader), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryBinarySkeletonV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Skeleton",
+                                    static_cast<uint32_t>(SOH::ResourceType::SOH_Skeleton), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryXMLSkeletonV0>()),
+                                    RESOURCE_FORMAT_XML, "Skeleton",
+                                    static_cast<uint32_t>(SOH::ResourceType::SOH_Skeleton), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryBinarySkeletonLimbV0>()),
                                     RESOURCE_FORMAT_BINARY, "SkeletonLimb",
                                     static_cast<uint32_t>(SOH::ResourceType::SOH_SkeletonLimb), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryXMLSkeletonLimbV0>(), RESOURCE_FORMAT_XML,
-                                    "SkeletonLimb", static_cast<uint32_t>(SOH::ResourceType::SOH_SkeletonLimb), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryPathV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Path", static_cast<uint32_t>(SOH::ResourceType::SOH_Path), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryXMLPathV0>(), RESOURCE_FORMAT_XML, "Path",
-                                    static_cast<uint32_t>(SOH::ResourceType::SOH_Path), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryCutsceneV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Cutscene", static_cast<uint32_t>(SOH::ResourceType::SOH_Cutscene), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryTextV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Text", static_cast<uint32_t>(SOH::ResourceType::SOH_Text), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryXMLTextV0>(), RESOURCE_FORMAT_XML, "Text",
-                                    static_cast<uint32_t>(SOH::ResourceType::SOH_Text), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryXMLSkeletonLimbV0>()),
+                                    RESOURCE_FORMAT_XML, "SkeletonLimb",
+                                    static_cast<uint32_t>(SOH::ResourceType::SOH_SkeletonLimb), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryBinaryPathV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Path", static_cast<uint32_t>(SOH::ResourceType::SOH_Path),
+                                    0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryXMLPathV0>()),
+                                    RESOURCE_FORMAT_XML, "Path", static_cast<uint32_t>(SOH::ResourceType::SOH_Path), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryBinaryCutsceneV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Cutscene",
+                                    static_cast<uint32_t>(SOH::ResourceType::SOH_Cutscene), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryBinaryTextV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Text", static_cast<uint32_t>(SOH::ResourceType::SOH_Text),
+                                    0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryXMLTextV0>()),
+                                    RESOURCE_FORMAT_XML, "Text", static_cast<uint32_t>(SOH::ResourceType::SOH_Text), 0);
     loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryAudioSampleV2>(), RESOURCE_FORMAT_BINARY,
                                     "AudioSample", static_cast<uint32_t>(SOH::ResourceType::SOH_AudioSample), 2);
 
@@ -931,8 +978,9 @@ void OTRGlobals::Initialize() {
                                     static_cast<uint32_t>(SOH::ResourceType::SOH_AudioSequence), 2);
     loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryXMLAudioSequenceV0>(), RESOURCE_FORMAT_XML,
                                     "Sequence", static_cast<uint32_t>(SOH::ResourceType::SOH_AudioSequence), 0);
-    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryBackgroundV0>(), RESOURCE_FORMAT_BINARY,
-                                    "Background", static_cast<uint32_t>(SOH::ResourceType::SOH_Background), 0);
+    loader->RegisterResourceFactory(Zmp::ResSlots::Wrap(std::make_shared<SOH::ResourceFactoryBinaryBackgroundV0>()),
+                                    RESOURCE_FORMAT_BINARY, "Background",
+                                    static_cast<uint32_t>(SOH::ResourceType::SOH_Background), 0);
 
     Lang::LoadLangs();
 
@@ -1071,6 +1119,9 @@ void OTRAudio_Thread() {
                                            num_audio_samples);
         }
 
+        if (Zmp_AudioOutputMuted()) { // ZMP: silence the output while the window has no real focus (presentation only)
+            memset(audio_buffer, 0, total_samples * sizeof(int16_t));
+        }
         AudioPlayer_Play(reinterpret_cast<u8*>(audio_buffer), total_samples * sizeof(int16_t));
     };
 
@@ -1144,7 +1195,10 @@ void OTRAudio_Init() {
 
     if (!audio.running) {
         audio.running = true;
+#ifndef __EMSCRIPTEN__
+        // The web build has no threads; audio is mixed on the main thread in Graph_ProcessGfxCommands.
         audio.thread = std::thread(OTRAudio_Thread);
+#endif
     }
 }
 
@@ -1164,7 +1218,9 @@ extern "C" void OTRAudio_Exit() {
     audio.cv_to_thread.notify_all();
 
     // Wait until the audio thread quit
-    audio.thread.join();
+    if (audio.thread.joinable()) {
+        audio.thread.join();
+    }
 #if 0
     for (size_t i = 0; i < sequenceMapSize; i++) {
         free(sequenceMap[i]);
@@ -1547,7 +1603,10 @@ bool VerifyArchiveVersion(OTRVersion version) {
 
 extern "C" void InitOTR(int argc, char* argv[]) {
     OTRGlobals::Instance = new OTRGlobals();
+#ifndef __EMSCRIPTEN__
+    // The web build ships pre-extracted archives (ZMP web, D-238).
     OTRGlobals::Instance->RunExtract(argc, argv);
+#endif
 
     OTRGlobals::Instance->Initialize();
     CustomMessageManager::Instance = new CustomMessageManager();
@@ -1609,7 +1668,9 @@ extern "C" void InitOTR(int argc, char* argv[]) {
     }
 
     srand(static_cast<unsigned int>(now));
+#ifndef __EMSCRIPTEN__
     SDLNet_Init();
+#endif
     if (CVarGetInteger(CVAR_REMOTE_CROWD_CONTROL("Enabled"), 0)) {
         CrowdControl::Instance->Enable();
     }
@@ -1622,6 +1683,7 @@ extern "C" void InitOTR(int argc, char* argv[]) {
     ShipInit::InitAll();
     Rando::StaticData::InitHashMaps();
     OTRGlobals::Instance->gRandoContext->AddExcludedOptions();
+    Zmp_Init(); // ZMP
 }
 
 extern "C" void SaveManager_ThreadPoolWait() {
@@ -1629,6 +1691,7 @@ extern "C" void SaveManager_ThreadPoolWait() {
 }
 
 extern "C" void DeinitOTR() {
+    Zmp_Deinit(); // ZMP
     SaveManager_ThreadPoolWait();
     OTRAudio_Exit();
     if (CVarGetInteger(CVAR_REMOTE_CROWD_CONTROL("Enabled"), 0)) {
@@ -1640,7 +1703,9 @@ extern "C" void DeinitOTR() {
     if (CVarGetInteger(CVAR_REMOTE_ANCHOR("Enabled"), 0)) {
         Anchor::Instance->Disable();
     }
+#ifndef __EMSCRIPTEN__
     SDLNet_Quit();
+#endif
 
     // Destroying gui here because we have shared ptrs to LUS objects which output to SPDLOG which is destroyed before
     // these shared ptrs.
@@ -1787,7 +1852,114 @@ extern "C" void Graph_StartFrame() {
 #endif
 }
 
+static bool sZmpSkipDraw = false; // ZMP (D-191): this frame is not drawn (a client catching up with its group)
+
 // Interpolated frames of a tick are evenly spaced numerators time+step, time+2*step, ... over denom.
+#ifdef __EMSCRIPTEN__
+// ZMP web (D-238): the web build has no audio thread. One batch of audio per game frame, mixed on the main thread
+// (the same production rule as OTRAudio_Thread's produce_next_batch, with the same producer guard).
+static void OTRAudio_ProcessFrameWeb() {
+#define ZMP_WEB_SAMPLES_HIGH 560
+#define ZMP_WEB_SAMPLES_MID 544
+#define ZMP_WEB_SAMPLES_LOW 528
+#define ZMP_WEB_AUDIO_FRAMES_PER_UPDATE (R_UPDATE_RATE > 0 ? R_UPDATE_RATE : 1)
+#define ZMP_WEB_NUM_AUDIO_CHANNELS 2
+    static int32_t sample_debt_thirds = 0;
+    if (AudioPlayer_Buffered() + ZMP_WEB_SAMPLES_MID * ZMP_WEB_AUDIO_FRAMES_PER_UPDATE > AudioPlayer_GetDesiredBuffered()) {
+        return;
+    }
+    u32 num_audio_samples = sample_debt_thirds > 0 ? ZMP_WEB_SAMPLES_MID : ZMP_WEB_SAMPLES_LOW;
+    sample_debt_thirds += (1600 - 3 * (int32_t)num_audio_samples) * ZMP_WEB_AUDIO_FRAMES_PER_UPDATE;
+    const u32 total_samples = num_audio_samples * ZMP_WEB_AUDIO_FRAMES_PER_UPDATE * ZMP_WEB_NUM_AUDIO_CHANNELS;
+    static s16 audio_buffer[ZMP_WEB_SAMPLES_HIGH * ZMP_WEB_NUM_AUDIO_CHANNELS * 3];
+    for (int i = 0; i < ZMP_WEB_AUDIO_FRAMES_PER_UPDATE; i++) {
+        AudioMgr_CreateNextAudioBuffer(audio_buffer + i * (num_audio_samples * ZMP_WEB_NUM_AUDIO_CHANNELS),
+                                       num_audio_samples);
+    }
+    if (Zmp_AudioOutputMuted()) {
+        memset(audio_buffer, 0, total_samples * sizeof(int16_t));
+    }
+    AudioPlayer_Play(reinterpret_cast<u8*>(audio_buffer), total_samples * sizeof(int16_t));
+}
+#endif
+
+// ZMP web (D-238): one interpolated frame of the tick. Shared by RunCommands (native: all frames back to back) and the
+// browser's spread (one frame per requestAnimationFrame callback).
+static void RunCommandsFrame(const std::shared_ptr<Fast::Fast3dWindow>& wnd, Gfx* Commands, int time, int denom,
+                             int index) {
+    auto intp = wnd->GetInterpreterWeak().lock().get();
+    intp->mInterpolationIndex = index;
+    std::unordered_map<Mtx*, MtxF> mtx_replacements =
+        (time == denom) ? std::unordered_map<Mtx*, MtxF>() : FrameInterpolation_Interpolate((float)time / denom);
+    intp->mInterpolationT = (float)time / denom;
+    bool zmpDrop = sZmpSkipDraw; // ZMP (D-191)
+#ifdef ZMP_HARNESS
+    // ZMP (tests): gZmp.Test.DropFrames makes every frame a dropped frame, as the window backend does when it
+    // has no time to show it (DrawAndRunGraphicsCommands returns before running the display list). The count
+    // goes to gZmp.Test.DroppedFrames. Presentation only: the simulation must not notice.
+    if (CVarGetInteger("gZmp.Test.DropFrames", 0) != 0) {
+        zmpDrop = true;
+        CVarSetInteger("gZmp.Test.DroppedFrames", CVarGetInteger("gZmp.Test.DroppedFrames", 0) + 1);
+    }
+#endif
+    if (!zmpDrop) {
+        wnd->DrawAndRunGraphicsCommands(Commands, mtx_replacements);
+        Zmp_MutantFrameDrawn(); // ZMP (test builds, D-192: mutant dibujo_escribe_simulacion)
+    }
+}
+
+static void PushMenuThemeColor() {
+    UIWidgets::Colors themeColor =
+        static_cast<UIWidgets::Colors>(CVarGetInteger(CVAR_SETTING("Menu.Theme"), UIWidgets::Colors::LightBlue));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, UIWidgets::ColorValues.at(themeColor));
+}
+
+#ifdef __EMSCRIPTEN__
+// The browser only shows the last frame drawn in each requestAnimationFrame callback, so drawing all the interpolated
+// frames of a tick back to back (like RunCommands does) would only ever show the last one. Instead, draw the first one
+// with the tick and each of the others in the callback closest to its due time, until the next tick. (ShipWeb.)
+static struct {
+    Gfx* commands;
+    int startTime;
+    int step;
+    int denom;
+    int count;
+    int next;
+    double tickStartMs;
+    double frameMs;
+} sPendingFrames;
+
+extern "C" void Graph_RunPendingInterpolatedFrame();
+
+static void RunCommandsSpread(Gfx* Commands, int time, int step, int denom, int count) {
+    sPendingFrames = { Commands, time, step, denom, count, 0, emscripten_get_now(),
+                       1000.0 * (R_UPDATE_RATE > 0 ? R_UPDATE_RATE : 1) / 60.0 / std::max(count, 1) };
+    Graph_RunPendingInterpolatedFrame();
+}
+
+extern "C" void Graph_RunPendingInterpolatedFrame() {
+    if (sPendingFrames.next >= sPendingFrames.count) {
+        return;
+    }
+    auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(OTRGlobals::Instance->context->GetWindow());
+    if (wnd == nullptr) {
+        return;
+    }
+    // Pick the frame due now; if the display is slower than the target fps, skip the ones already past.
+    double elapsed = emscripten_get_now() - sPendingFrames.tickStartMs;
+    int index = std::min((int)std::lround(elapsed / sPendingFrames.frameMs), sPendingFrames.count - 1);
+    if (index < sPendingFrames.next) {
+        return;
+    }
+    sPendingFrames.next = index + 1;
+    wnd->HandleEvents();
+    PushMenuThemeColor();
+    RunCommandsFrame(wnd, sPendingFrames.commands, sPendingFrames.startTime + sPendingFrames.step * (index + 1),
+                     sPendingFrames.denom, index);
+    ImGui::PopStyleColor();
+}
+#endif
+
 void RunCommands(Gfx* Commands, int time, int step, int denom, int count) {
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(OTRGlobals::Instance->context->GetWindow());
 
@@ -1798,31 +1970,26 @@ void RunCommands(Gfx* Commands, int time, int step, int denom, int count) {
     // Process window events for resize, mouse, keyboard events
     wnd->HandleEvents();
 
-    auto intp = wnd->GetInterpreterWeak().lock().get();
-    intp->mInterpolationIndex = 0;
-
-    UIWidgets::Colors themeColor =
-        static_cast<UIWidgets::Colors>(CVarGetInteger(CVAR_SETTING("Menu.Theme"), UIWidgets::Colors::LightBlue));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, UIWidgets::ColorValues.at(themeColor));
+    PushMenuThemeColor();
     for (int i = 0; i < count; i++) {
         time += step;
-        std::unordered_map<Mtx*, MtxF> mtx_replacements =
-            (time == denom) ? std::unordered_map<Mtx*, MtxF>() : FrameInterpolation_Interpolate((float)time / denom);
-        intp->mInterpolationT = (float)time / denom;
-        wnd->DrawAndRunGraphicsCommands(Commands, mtx_replacements);
-        intp->mInterpolationIndex++;
+        RunCommandsFrame(wnd, Commands, time, denom, i);
     }
     ImGui::PopStyleColor();
 }
 
 // C->C++ Bridge
 extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
+#ifdef __EMSCRIPTEN__
+    OTRAudio_ProcessFrameWeb(); // ZMP web (D-238): no audio thread
+#else
     {
         std::unique_lock<std::mutex> Lock(audio.mutex);
         audio.processing = true;
     }
 
     audio.cv_to_thread.notify_one();
+#endif
     int target_fps = OTRGlobals::Instance->GetInterpolationFPS();
     static int last_fps;
     static int last_update_rate;
@@ -1832,6 +1999,11 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetRawInstance()->GetWindow());
 
     if (target_fps == 20 || original_fps > target_fps) {
+        fps = original_fps;
+    }
+    // ZMP: replay speed-up (presentation only): one drawn frame per tick, paced at speed x 20 Hz.
+    int zmpSpeed = Zmp_PresentationSpeed();
+    if (zmpSpeed != 1) {
         fps = original_fps;
     }
 
@@ -1852,10 +2024,15 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     time -= fps;
 
     if (wnd != nullptr) {
-        wnd->SetTargetFps(fps);
+        wnd->SetTargetFps(zmpSpeed != 1 ? original_fps * (zmpSpeed > 1 ? zmpSpeed : 50) : fps); // ZMP
     }
 
     int step = original_fps;
+    // ZMP: while the lockstep waits for a bundle, redraw the last frame once and return to the tick gate.
+    if (Zmp_ShortFrame() && count > 1) {
+        start_time = next_original_frame - step;
+        count = 1;
+    }
     // When the gfx debugger is active, only run with the final mtx
     if (GfxDebuggerIsDebugging()) {
         start_time = next_original_frame;
@@ -1863,7 +2040,12 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
         count = 1;
     }
 
+    sZmpSkipDraw = !Zmp_DrawThisFrame(); // ZMP (D-191)
+#ifdef __EMSCRIPTEN__
+    RunCommandsSpread(commands, start_time, step, next_original_frame, count);
+#else
     RunCommands(commands, start_time, step, next_original_frame, count);
+#endif
 
     last_fps = fps;
     last_update_rate = R_UPDATE_RATE;

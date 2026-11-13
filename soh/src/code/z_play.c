@@ -1,4 +1,7 @@
 #include "global.h"
+#include "soh/Zmp/Sim/ZmpSim.h"     // ZMP
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
+#include "soh/Zmp/Test/Mutants.h"   // ZMP
 #include "vt.h"
 
 #include <string.h>
@@ -199,6 +202,7 @@ void Play_Destroy(GameState* thisx) {
     Player* player = GET_PLAYER(play);
 
     GameInteractor_ExecuteOnPlayDestroy();
+    Zmp_PlayDestroy(play); // ZMP
 
     play->state.gfxCtx->callback = NULL;
     play->state.gfxCtx->callbackParam = 0;
@@ -227,7 +231,10 @@ void Play_Destroy(GameState* thisx) {
     VisMono_Destroy(&gPlayVisMono);
 
     if (gSaveContext.linkAge != play->linkAgeOnLoad) {
-        Inventory_SwapAgeEquipment();
+        // ZMP: every player's buttons and equipment change of age, each with its own (phase 5b)
+        if (!Zmp_AgeSwapAll(play)) {
+            Inventory_SwapAgeEquipment();
+        }
         Player_SetEquipmentData(play, player);
     }
 
@@ -518,7 +525,7 @@ void Play_Init(GameState* thisx) {
     gTrnsnUnkState = 0;
     play->transitionMode = TRANS_MODE_OFF;
     FrameAdvance_Init(&play->frameAdvCtx);
-    Rand_Seed((u32)osGetTime());
+    Rand_Seed(Zmp_PlaySeed((u32)osGetTime())); // ZMP: deterministic seed during a ZMP session
     Matrix_Init(&play->state);
     play->state.main = Play_Main;
     play->state.destroy = Play_Destroy;
@@ -563,6 +570,7 @@ void Play_Init(GameState* thisx) {
     gItemAgeReqs[ITEM_ROCS_FEATHER] = AGE_REQ_NONE;
     gSlotAgeReqs[SLOT_NAYRUS_LOVE] = AGE_REQ_NONE;
 
+    Zmp_PlayInitBegin(play); // ZMP: the scene's Player becomes the anchor slot
     Actor_InitContext(play, &play->actorCtx, play->linkActorEntry);
 
     while (!func_800973FC(play, &play->roomCtx)) {
@@ -593,6 +601,8 @@ void Play_Init(GameState* thisx) {
         Camera_ChangeDataIdx(&play->mainCamera, playerStartBgCamIndex);
     }
 
+    Zmp_PlayInitPlayers(play, playerStartBgCamIndex); // ZMP: the Player actors of the other players
+
     if (YREG(15) == 32) {
         play->unk_1242B = 2;
     } else if (YREG(15) == 16) {
@@ -604,7 +614,7 @@ void Play_Init(GameState* thisx) {
     Environment_PlaySceneSequence(play);
     gSaveContext.seqId = play->sequenceCtx.seqId;
     gSaveContext.natureAmbienceId = play->sequenceCtx.natureAmbienceId;
-    Actor_InitPlayerHorse(play, GET_PLAYER(play));
+    Zmp_InitPlayerHorses(play); // ZMP (D-233): each present Link's own Epona (Actor_InitPlayerHorse for one)
     AnimationContext_Update(play, &play->animationCtx);
     gSaveContext.respawnFlag = 0;
 
@@ -658,6 +668,7 @@ void Play_Update(PlayState* play) {
     Input* input = play->state.input;
     s32 isPaused;
     s32 pad1;
+    s32 zmpActorsFrozen = false; // ZMP: a hit's freeze stopped the actors in this tick (finding AG)
 
     if ((SREG(1) < 0) || (DREG(0) != 0)) {
         SREG(1) = 0;
@@ -696,7 +707,9 @@ void Play_Update(PlayState* play) {
     gSegments[2] = VIRTUAL_TO_PHYSICAL(play->sceneSegment);
 
     if (FrameAdvance_Update(&play->frameAdvCtx, &input[1])) {
-        if ((play->transitionMode == TRANS_MODE_OFF) && (play->transitionTrigger != TRANS_TRIGGER_OFF)) {
+        // ZMP: a player who walks out alone leaves the group; the others stay (phase 5, no countdown)
+        if ((play->transitionMode == TRANS_MODE_OFF) && Zmp_TransitionGate(play) &&
+            (play->transitionTrigger != TRANS_TRIGGER_OFF)) {
             play->transitionMode = TRANS_MODE_SETUP;
         }
 
@@ -1109,7 +1122,9 @@ void Play_Update(PlayState* play) {
 
             if ((gSaveContext.gameMode == GAMEMODE_NORMAL) && (play->msgCtx.msgMode == MSGMODE_NONE) &&
                 (play->gameOverCtx.state == GAMEOVER_INACTIVE)) {
-                KaleidoSetup_Update(play);
+                if (!Zmp_PauseIsLocal()) { // ZMP: in multiplayer each client opens its own menu (Zmp_PauseLocalUpdate)
+                    KaleidoSetup_Update(play);
+                }
             }
 
             PLAY_LOG(3551);
@@ -1138,6 +1153,7 @@ void Play_Update(PlayState* play) {
                 }
 
                 if (play->actorCtx.freezeFlashTimer && (play->actorCtx.freezeFlashTimer-- < 5)) {
+                    zmpActorsFrozen = true; // ZMP
                     if (GameInteractor_Should(VB_FLASH_SCREEN_FOR_FINISHING_BLOW, true)) {
                         osSyncPrintf("FINISH=%d\n", play->actorCtx.freezeFlashTimer);
 
@@ -1173,10 +1189,12 @@ void Play_Update(PlayState* play) {
                     }
 
                     PLAY_LOG(3643);
+                    s32 zmpCsCtx = Zmp_CutsceneContextBegin(play); // ZMP (D-188)
                     func_80064558(play, &play->csCtx);
 
                     PLAY_LOG(3648);
                     func_800645A0(play, &play->csCtx);
+                    Zmp_CutsceneContextEnd(play, zmpCsCtx); // ZMP (D-188)
 
                     PLAY_LOG(3651);
                     Effect_UpdateAll(play);
@@ -1226,19 +1244,33 @@ void Play_Update(PlayState* play) {
 
             if ((play->pauseCtx.state != 0) || (play->pauseCtx.debugState != 0)) {
                 PLAY_LOG(3721);
+                Zmp_EnterOwner(play, 1); // ZMP: the menu reads its owner's input
                 KaleidoScopeCall_Update(play);
+                Zmp_RestoreAnchor(play); // ZMP
             } else if (play->gameOverCtx.state != GAMEOVER_INACTIVE) {
                 PLAY_LOG(3727);
+                Zmp_EnterOwner(play, 1); // ZMP
                 GameOver_Update(play);
+                Zmp_RestoreAnchor(play); // ZMP
+                // ZMP: a player reviving with a fairy keeps the game over context busy; the text boxes of the other
+                // players go on meanwhile (the original has one player and stops its text)
+                Zmp_MessageUpdateDuringRevive(play, zmpActorsFrozen);
             } else {
                 PLAY_LOG(3733);
-                Message_Update(play);
+                // ZMP: one text box per player, each with its player's input (phase 5b)
+                if (!Zmp_MessageUpdateAll(play, zmpActorsFrozen)) { // ZMP: the text boxes wait while it is frozen
+                    Message_Update(play);
+                }
             }
+
+            Zmp_PauseLocalUpdate(play); // ZMP: this client's pause menu (the world keeps running)
 
             PLAY_LOG(3737);
 
             PLAY_LOG(3742);
             Interface_Update(play);
+            Zmp_StepDoActionLabels(play);       // ZMP (D-220): every player's A button label turns in the tick
+            Zmp_UpdateHealthAccumulators(play); // ZMP: heart refills of the other players
 
             PLAY_LOG(3765);
             AnimationContext_Update(play, &play->animationCtx);
@@ -1270,14 +1302,20 @@ skip:
 
         PLAY_LOG(3806);
 
-        for (i = 0; i < NUM_CAMS; i++) {
-            if ((i != play->nextCamera) && (play->cameraPtrs[i] != NULL)) {
-                PLAY_LOG(3809);
-                Camera_Update(play->cameraPtrs[i]);
+        if (Zmp_MultiActive()) {
+            // ZMP: every player's cameras (one main camera each, sub cameras in their owner's context), the
+            // anchor's active camera last: its view stays in play->view
+            Zmp_UpdateCameras(play);
+        } else {
+            for (i = 0; i < NUM_CAMS; i++) {
+                if ((i != play->nextCamera) && (play->cameraPtrs[i] != NULL)) {
+                    PLAY_LOG(3809);
+                    Camera_Update(play->cameraPtrs[i]);
+                }
             }
-        }
 
-        Camera_Update(play->cameraPtrs[play->nextCamera]);
+            Camera_Update(play->cameraPtrs[play->nextCamera]);
+        }
 
         PLAY_LOG(3814);
     }
@@ -1285,22 +1323,59 @@ skip:
     PLAY_LOG(3816);
     Environment_Update(play, &play->envCtx, &play->lightCtx, &play->pauseCtx, &play->msgCtx, &play->gameOverCtx,
                        play->state.gfxCtx);
+    // ZMP (D-156): the storm's lightning timer is simulation (it draws random numbers and decides when a bolt
+    // strikes): the original runs it in the draw, which a machine skips while its own pause menu shows the frozen
+    // picture. In a session it runs here, once per tick, at the same point of the tick (after every update).
+    if (Zmp_MultiActive()) {
+        Environment_UpdateLightningStrike(play);
+    }
 }
 
+// ZMP: this frame draws the world again to capture the pause background (set by Play_Draw)
+static u8 sZmpPauseRecapture = false;
+
 void Play_DrawOverlayElements(PlayState* play) {
+    Zmp_OverlayBegin(play); // ZMP: HUD and menus show the local player
+
     if ((play->pauseCtx.state != 0) || (play->pauseCtx.debugState != 0)) {
+        // ZMP: in a frame that captures the pause background again the menu still runs its draw (see
+        // KaleidoScopeCall_Draw) and its display list is dropped: the capture is taken after everything in the
+        // opaque list and must hold the world alone, as it did when that frame skipped the menu.
+        GraphicsContext* gfxCtx = play->state.gfxCtx;
+        Gfx* opa = gfxCtx->polyOpa.p;
+        Gfx* xlu = gfxCtx->polyXlu.p;
+        Gfx* ovl = gfxCtx->overlay.p;
+
+        Zmp_EnterOwner(play, 1); // ZMP: the menu draws (and updates part of its state) for its owner
         KaleidoScopeCall_Draw(play);
+        if (sZmpPauseRecapture) {
+            gfxCtx->polyOpa.p = opa;
+            gfxCtx->polyXlu.p = xlu;
+            gfxCtx->overlay.p = ovl;
+        }
+        Zmp_OverlayBegin(play);
     }
+    Zmp_PauseLocalDraw(play); // ZMP: this client's pause menu
+    Zmp_OverlayBegin(play);   // ZMP
 
     if (gSaveContext.gameMode == GAMEMODE_NORMAL) {
+        Zmp_HudBegin(play); // ZMP: this player's HUD stays while another player reads its text
         Interface_Draw(play);
+        Zmp_HudEnd(play); // ZMP
     }
 
-    Message_Draw(play);
+    // ZMP: the text box / ocarina runs part of its logic while drawing (it spawns the song effects): the one of
+    // every player draws in its context on every machine; another player's runs but is not shown here.
+    if (!Zmp_MessageDrawAll(play)) {
+        Message_Draw(play);
+    }
+    Zmp_OverlayBegin(play);
 
     if (play->gameOverCtx.state != GAMEOVER_INACTIVE) {
         GameOver_FadeInLights(play);
     }
+
+    Zmp_OverlayEnd(play); // ZMP
 }
 
 void Play_Draw(PlayState* play) {
@@ -1315,19 +1390,29 @@ void Play_Draw(PlayState* play) {
     static bool lastAltAssets;
     static bool hasCapturedPauseBuffer;
     bool recapturePauseBuffer = false;
+    // ZMP (D-224): in a session the pause of the simulation (the group game over: the world is stopped) does not draw
+    // the world from a picture captured on this PC. Whether this PC has that picture (its window size, frames it did
+    // not present while catching up, D-191, or it entered the group after the capture) is presentation; drawing the
+    // world again to capture it ran the actors' draw (the culling flag, draw side effects) on that PC only: whoever
+    // entered a group in game over resynchronized (Death Mountain Trail, block 10d). Every machine draws the stopped
+    // world live every tick instead, as with the local pause menu.
+    bool zmpLivePauseBg = Zmp_MultiActive() && !Zmp_TestMutant("pausa_fondo_local");
 
     // If the size has changed, alt assets toggled, or dropped frames leading to the buffer not being copied,
     // set the prerender state back to setup to copy a new frame.
     // This requires not rendering kaleido during this copy to avoid kaleido itself being copied too.
-    if ((R_PAUSE_MENU_MODE == 2 || R_PAUSE_MENU_MODE == 3) &&
+    if (!zmpLivePauseBg && (R_PAUSE_MENU_MODE == 2 || R_PAUSE_MENU_MODE == 3) && // ZMP (D-224)
         (lastPauseWidth != OTRGetGameRenderWidth() || lastPauseHeight != OTRGetGameRenderHeight() ||
          lastAltAssets != ResourceMgr_IsAltAssetsEnabled() || !hasCapturedPauseBuffer)) {
         R_PAUSE_MENU_MODE = 1;
         recapturePauseBuffer = true;
     }
+    sZmpPauseRecapture = recapturePauseBuffer; // ZMP: Play_DrawOverlayElements drops the menu's picture this frame
     // #endregion
 
     OPEN_DISPS(gfxCtx);
+
+    Zmp_DrawPresentBegin(play); // ZMP: no black bars here for another player's private cutscene
 
     gSegments[4] = VIRTUAL_TO_PHYSICAL(play->objectCtx.status[play->objectCtx.mainKeepIndex].segment);
     gSegments[5] = VIRTUAL_TO_PHYSICAL(play->objectCtx.status[play->objectCtx.subKeepIndex].segment);
@@ -1354,9 +1439,11 @@ void Play_Draw(PlayState* play) {
     if ((HREG(80) != 10) || (HREG(82) != 0)) {
         GameInteractor_ExecuteOnPlayDrawBegin();
 
+        Zmp_DrawLightBegin(play); // ZMP: the local player's room lighting for this picture
         POLY_OPA_DISP = Play_SetFog(play, POLY_OPA_DISP);
         POLY_XLU_DISP = Play_SetFog(play, POLY_XLU_DISP);
 
+        Zmp_DrawBeginView(play); // ZMP: canonical matrices for the simulation, local view for the picture
         func_800AA460(&play->view, play->view.fovy, play->view.zNear, play->lightCtx.fogFar);
         func_800AAA50(&play->view, 15);
 
@@ -1444,7 +1531,7 @@ void Play_Draw(PlayState* play) {
             R_PAUSE_MENU_MODE = 0;
         }
 
-        if (R_PAUSE_MENU_MODE == 3) {
+        if (R_PAUSE_MENU_MODE == 3 && !zmpLivePauseBg) { // ZMP (D-224): in a session the world is drawn live
             Gfx* gfxP = POLY_OPA_DISP;
 
             // SOH [Port] Draw game framebuffer using our custom handling
@@ -1479,7 +1566,9 @@ void Play_Draw(PlayState* play) {
         }
 
         if ((HREG(80) != 10) || (HREG(90) & 4)) {
-            Environment_UpdateLightningStrike(play);
+            if (!Zmp_MultiActive()) { // ZMP (D-156): in a session it runs in Play_Update
+                Environment_UpdateLightningStrike(play);
+            }
             Environment_DrawLightning(play, 0);
         }
 
@@ -1501,6 +1590,7 @@ void Play_Draw(PlayState* play) {
                 Scene_Draw(play);
                 Room_Draw(play, &play->roomCtx.curRoom, roomDrawFlags & 3);
                 Room_Draw(play, &play->roomCtx.prevRoom, roomDrawFlags & 3);
+                Zmp_DrawExtraRooms(play, roomDrawFlags & 3); // ZMP: rooms kept for other players
             }
         }
 
@@ -1620,9 +1710,14 @@ void Play_Draw(PlayState* play) {
     }
 
 Play_Draw_skip:
+    Zmp_DrawEndView(play);    // ZMP: the simulation keeps the canonical view and matrices
+    Zmp_DrawLightEnd(play);   // ZMP: and its own lighting
+    Zmp_DrawPresentEnd(play); // ZMP
 
     if (play->view.unk_124 != 0) {
+        Zmp_CameraInterfaceOwnerBegin(GET_ACTIVE_CAM(play)); // ZMP: this camera's letterbox and HUD are its owner's
         Camera_Update(GET_ACTIVE_CAM(play));
+        Zmp_CameraInterfaceOwnerEnd(); // ZMP
         func_800AB944(&play->view);
         play->view.unk_124 = 0;
         if (play->skyboxId && (play->skyboxId != SKYBOX_UNSET_1D) && !play->envCtx.skyboxDisabled) {
@@ -1630,7 +1725,11 @@ Play_Draw_skip:
         }
     }
 
-    Camera_Finish(GET_ACTIVE_CAM(play));
+    if (Zmp_MultiActive()) {
+        Zmp_FinishCameras(play); // ZMP: every player's active sub camera, in its context
+    } else {
+        Camera_Finish(GET_ACTIVE_CAM(play));
+    }
 
     CLOSE_DISPS(gfxCtx);
 
@@ -1858,6 +1957,7 @@ s16 Play_CreateSubCamera(PlayState* play) {
     play->cameraPtrs[i] = &play->subCameras[i - CAM_ID_SUB_FIRST];
     Camera_Init(play->cameraPtrs[i], &play->view, &play->colCtx, play);
     play->cameraPtrs[i]->thisIdx = i;
+    Zmp_OnSubCameraCreated(play, i); // ZMP: scope of the camera (everybody or one player)
 
     return i;
 }
@@ -1868,6 +1968,10 @@ s16 Play_GetActiveCamId(PlayState* play) {
 
 s16 Play_ChangeCameraStatus(PlayState* play, s16 camId, s16 status) {
     s16 camIdx = (camId == SUBCAM_ACTIVE) ? play->activeCamera : camId;
+
+    if (Zmp_MultiActive()) { // ZMP: the active camera is per player; a global camera becomes everybody's
+        return Zmp_ChangeCameraStatus(play, camIdx, status);
+    }
 
     if (status == CAM_STAT_ACTIVE) {
         play->activeCamera = camIdx;
@@ -1886,6 +1990,7 @@ void Play_ClearCamera(PlayState* play, s16 camId) {
     if (play->cameraPtrs[camIdx] != NULL) {
         Camera_ChangeStatus(play->cameraPtrs[camIdx], CAM_STAT_UNK100);
         play->cameraPtrs[camIdx] = NULL;
+        Zmp_OnCameraCleared(play, camIdx); // ZMP
         osSyncPrintf("camera control: " VT_BGCOL(CYAN) " " VT_COL(WHITE, BLUE) " clear sub camera [%d] " VT_BGCOL(
                          CYAN) " " VT_RST "\n",
                      camIdx);
@@ -1904,6 +2009,7 @@ void Play_ClearAllSubCameras(PlayState* play) {
     }
 
     play->activeCamera = CAM_ID_MAIN;
+    Zmp_OnAllSubCamerasCleared(play); // ZMP
 }
 
 Camera* Play_GetCamera(PlayState* play, s16 camId) {

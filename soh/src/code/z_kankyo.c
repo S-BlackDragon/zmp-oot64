@@ -1,4 +1,6 @@
 #include "global.h"
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
+#include "soh/Zmp/Test/Mutants.h"   // ZMP
 #include <libultraship/libultra.h>
 #include "vt.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
@@ -60,8 +62,30 @@ u8 gSkyboxBlendingEnabled = false;
 
 u16 gTimeSpeed = 0;
 
-#define ENVIRONMENT_SHIP_SAVESTATE_FIELDS(F) F(gTimeSpeed)
-SHIP_SAVESTATE_DEFINE(Environment, ENVIRONMENT_SHIP_SAVESTATE_FIELDS)
+// ZMP (finding Y): the statics above are simulation too and did not travel with a state: who received a state kept
+// its own. D_8011FB34 is what the lights go back to when the camera comes out of the water (in a session the water's
+// lights no longer touch the scene's, Zmp_OnUnderwaterLights; a state loaded outside a session needs it).
+#define ENVIRONMENT_SHIP_SAVESTATE_FIELDS(F) \
+    F(gTimeSpeed)                            \
+    F(gWeatherMode)                          \
+    F(D_8011FB34)                            \
+    F(D_8011FB38)                            \
+    F(gSkyboxBlendingEnabled)
+// ZMP (family 1, D-116): the sandstorm's two colours of the time of day and the blend between them, written by the
+// environment's update when the time entry changes: who entered afterwards drew another sandstorm.
+extern u8 D_8011FDCC;
+extern u8 D_8011FDD0;
+extern f32 D_8011FDD4;
+// ZMP (finding BY, D-156): a storm's lightning (the strike's timer and flash, the bolts) is simulation too: the
+// timer draws the game's random numbers every tick and decides when a bolt strikes. Who joined the Graveyard in the
+// rain, or received the leader's state, kept its own timer: one machine struck and drew 13 numbers where the others
+// drew 2, and the group desynchronized for as long as it rained.
+extern LightningBolt sLightningBolts[3];
+extern LightningStrike gLightningStrike;
+extern s16 sLightningFlashAlpha;
+#define ENVIRONMENT_ZMP_NEW_FIELDS(F) \
+    F(D_8011FDCC) F(D_8011FDD0) F(D_8011FDD4) F(sLightningBolts) F(gLightningStrike) F(sLightningFlashAlpha)
+ZMP_SAVESTATE_DEFINE(Environment, ENVIRONMENT_SHIP_SAVESTATE_FIELDS, ENVIRONMENT_ZMP_NEW_FIELDS, ZMP_SAVESTATE_NONE)
 
 u16 D_8011FB44 = 0xFFFC;
 
@@ -821,6 +845,54 @@ void Environment_DisableUnderwaterLights(PlayState* play) {
         play->envCtx.unk_BF = 0xFF;
         play->envCtx.unk_D8 = 1.0f;
     }
+}
+
+// ZMP: the light settings a camera under water is drawn with (water light setting `index`), as the original gets
+// them after Environment_EnableUnderwaterLights: outdoors, light configuration `index` at this time of day (the sun
+// and the moon keep their directions); indoors, light setting `index` of the scene as it is. Nothing of the
+// simulation is changed: the result goes to `out`. Returns 0 if the scene has no such setting.
+s32 Environment_ZmpWaterLights(PlayState* play, s32 index, EnvLightSettings* out) {
+    EnvironmentContext* envCtx = &play->envCtx;
+    EnvLightSettings* list = envCtx->lightSettingsList;
+    u16 i;
+    u16 j;
+
+    if (list == NULL || index < 0) {
+        return 0;
+    }
+    *out = envCtx->lightSettings;
+    if (envCtx->indoors) {
+        if (index >= 0x20) {
+            return 0;
+        }
+        *out = list[index];
+        out->fogNear = list[index].fogNear & 0x3FF;
+        return 1;
+    }
+    if (index >= ARRAY_COUNT(D_8011FB48)) {
+        return 0;
+    }
+    for (i = 0; i < ARRAY_COUNT(D_8011FB48[index]); i++) {
+        struct_8011FB48* entry = &D_8011FB48[index][i];
+
+        if ((gSaveContext.skyboxTime >= entry->startTime) &&
+            ((gSaveContext.skyboxTime < entry->endTime) || entry->endTime == 0xFFFF)) {
+            f32 weight = Environment_LerpWeight(entry->endTime, entry->startTime, ((void)0, gSaveContext.skyboxTime));
+            EnvLightSettings* a = &list[entry->unk_04];
+            EnvLightSettings* b = &list[entry->unk_05];
+
+            for (j = 0; j < 3; j++) {
+                out->ambientColor[j] = LERP(a->ambientColor[j], b->ambientColor[j], weight);
+                out->light1Color[j] = LERP(a->light1Color[j], b->light1Color[j], weight);
+                out->light2Color[j] = LERP(a->light2Color[j], b->light2Color[j], weight);
+                out->fogColor[j] = LERP(a->fogColor[j], b->fogColor[j], weight);
+            }
+            out->fogNear = LERP16((a->fogNear & 0x3FF), (b->fogNear & 0x3FF), weight);
+            out->fogFar = LERP16(a->fogFar, b->fogFar, weight);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 void Environment_PrintDebugInfo(PlayState* play, Gfx** gfx) {
@@ -1630,6 +1702,12 @@ f32 func_800746DC(void) {
     return Rand_ZeroOne() - 0.5f;
 }
 
+// ZMP (finding BY, D-156): the rain is presentation. How many random numbers its drawing takes depends on this
+// machine's picture (the rings on the ground only when its camera is above the Link): with the game's numbers, a
+// screen whose camera was above changed the simulation's RNG and the group desynchronized while it rained (the
+// Graveyard after Bongo Bongo, the Song of Storms). It draws with numbers of its own, kept between frames.
+static u32 sZmpRainRand[2] = { 1, 0 };
+
 void Environment_DrawRain(PlayState* play, View* view, GraphicsContext* gfxCtx) {
     s16 i;
     s32 pad;
@@ -1650,6 +1728,13 @@ void Environment_DrawRain(PlayState* play, View* view, GraphicsContext* gfxCtx) 
     Player* player = GET_PLAYER(play);
 
     if (!(play->cameraPtrs[0]->unk_14C & 0x100) && (play->envCtx.unk_EE[2] == 0)) {
+        // ZMP (D-156): the rain's own random numbers (mutant lluvia_del_juego: the game's, as before)
+        u32 zmpSimRand[2];
+        s32 zmpOwnRand = !Zmp_TestMutant("lluvia_del_juego");
+        if (zmpOwnRand) {
+            zmpSimRand[0] = Rand_ZmpGetState(&zmpSimRand[1]);
+            Rand_ZmpSetState(sZmpRainRand[0], sZmpRainRand[1]);
+        }
         OPEN_DISPS(gfxCtx);
 
         vec.x = view->lookAt.x - view->eye.x;
@@ -1739,6 +1824,10 @@ void Environment_DrawRain(PlayState* play, View* view, GraphicsContext* gfxCtx) 
         }
 
         CLOSE_DISPS(gfxCtx);
+        if (zmpOwnRand) { // ZMP (D-156): the simulation's numbers back, untouched
+            sZmpRainRand[0] = Rand_ZmpGetState(&sZmpRainRand[1]);
+            Rand_ZmpSetState(zmpSimRand[0], zmpSimRand[1]);
+        }
     }
 }
 
@@ -2138,7 +2227,7 @@ void Environment_DrawCustomLensFlare(PlayState* play) {
 
 void Environment_InitGameOverLights(PlayState* play) {
     s32 pad;
-    Player* player = GET_PLAYER(play);
+    Player* player = Zmp_GameOverLightPlayer(play); // ZMP: the Link reviving with a fairy
 
     sGameOverLightsIntensity = 0;
 
@@ -2154,7 +2243,7 @@ void Environment_InitGameOverLights(PlayState* play) {
 }
 
 void Environment_FadeInGameOverLights(PlayState* play) {
-    Player* player = GET_PLAYER(play);
+    Player* player = Zmp_GameOverLightPlayer(play); // ZMP: the Link reviving with a fairy
     s16 i;
 
     Lights_PointNoGlowSetInfo(&sNGameOverLightInfo, (s16)player->actor.world.pos.x - 10.0f,
@@ -2194,7 +2283,7 @@ void Environment_FadeInGameOverLights(PlayState* play) {
 }
 
 void Environment_FadeOutGameOverLights(PlayState* play) {
-    Player* player = GET_PLAYER(play);
+    Player* player = Zmp_GameOverLightPlayer(play); // ZMP: the Link reviving with a fairy
     s16 i;
 
     if (sGameOverLightsIntensity >= 3) {
@@ -2442,6 +2531,8 @@ void Environment_DrawSandstorm(PlayState* play, u8 sandstormState) {
 void Environment_AdjustLights(PlayState* play, f32 arg1, f32 arg2, f32 arg3, f32 arg4) {
     f32 temp;
     s32 i;
+
+    Zmp_OnLightAdjust(play); // ZMP: the darkening of one player's own effect is drawn only on its screen
 
     if (play->roomCtx.curRoom.behaviorType1 != ROOM_BEHAVIOR_TYPE1_5 && Play_CamIsNotFixed(play)) {
         arg1 = CLAMP_MIN(arg1, 0.0f);

@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ZMP · Ocarina of Time co-op</title>
+    <link rel="icon" href="data:,">
+    <style>
+        :root {
+            --bg: #07090f;
+            --card: #11151f;
+            --card-border: #232a3a;
+            --text: #e4e7ee;
+            --muted: #8d95a8;
+            --accent: #4a8fe7;
+            --accent-soft: rgba(74, 143, 231, 0.14);
+            --error: #ef6b6b;
+        }
+
+        html, body {
+            margin: 0;
+            height: 100%;
+            overflow: hidden;
+            background: var(--bg);
+            color: var(--text);
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        }
+
+        /* SDL reads the canvas CSS size to size the game window (and follows it on resize). */
+        #canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            border: 0;
+            outline: none;
+            background: #000;
+        }
+
+        #loader {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            /* (a card taller than the window must not be cut at the top: "safe" keeps it scrollable) */
+            justify-content: safe center;
+            gap: 14px;
+            padding: 16px;
+            box-sizing: border-box;
+            overflow-y: auto;
+            background: radial-gradient(ellipse at 50% 30%, #152038 0%, var(--bg) 70%);
+            transition: opacity 0.4s;
+        }
+
+        #loader.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #loader h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+        }
+
+        #loader .subtitle {
+            margin: -8px 0 4px;
+            font-size: 13px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        #progress {
+            width: min(320px, 70vw);
+            height: 6px;
+            border-radius: 3px;
+            background: #1d2333;
+            overflow: hidden;
+        }
+
+        #progress-bar {
+            width: 0;
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.15s;
+        }
+
+        #status {
+            min-height: 1.2em;
+            font-size: 13px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        #loader.error #status {
+            color: var(--error);
+        }
+
+        /* First-run ROM setup (driven by rom-setup.js through Module.romSetupUI). */
+        #rom-setup {
+            display: none;
+            width: min(520px, 100%);
+            box-sizing: border-box;
+            padding: 28px;
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            background: var(--card);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            font-size: 14px;
+            line-height: 1.55;
+        }
+
+        #loader.rom-setup #rom-setup {
+            display: block;
+        }
+
+        #loader.rom-setup #progress,
+        #loader.rom-setup #status {
+            display: none;
+        }
+
+        #rom-setup h2 {
+            margin: 0 0 8px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        #rom-setup p {
+            margin: 0 0 14px;
+            color: var(--muted);
+        }
+
+        #rom-drop {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            padding: 22px 16px;
+            border: 2px dashed var(--card-border);
+            border-radius: 10px;
+            text-align: center;
+            transition: border-color 0.15s, background 0.15s;
+        }
+
+        #rom-drop.dragging {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        #rom-pick {
+            padding: 10px 20px;
+            border: 0;
+            border-radius: 8px;
+            background: var(--accent);
+            color: #fff;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        #rom-pick:hover {
+            filter: brightness(1.1);
+        }
+
+        .rom-extensions {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .rom-extensions code {
+            padding: 1px 6px;
+            border-radius: 4px;
+            background: #1d2333;
+            color: var(--text);
+        }
+
+        #rom-versions {
+            margin-top: 14px;
+            color: var(--muted);
+        }
+
+        #rom-versions summary {
+            cursor: pointer;
+            color: var(--text);
+        }
+
+        #rom-versions ul {
+            margin: 8px 0 0;
+            padding-left: 20px;
+            columns: 2;
+            column-gap: 24px;
+            font-size: 13px;
+        }
+
+        #rom-busy {
+            display: none;
+        }
+
+        #rom-setup.busy #rom-drop,
+        #rom-setup.busy #rom-versions,
+        #rom-setup.busy #rom-intro {
+            display: none;
+        }
+
+        #rom-setup.busy #rom-busy {
+            display: block;
+        }
+
+        #rom-progress {
+            height: 6px;
+            margin: 12px 0 8px;
+            border-radius: 3px;
+            background: #1d2333;
+            overflow: hidden;
+        }
+
+        #rom-progress-bar {
+            width: 0;
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.2s;
+        }
+
+        #rom-busy-note {
+            font-size: 13px;
+        }
+
+        #rom-error {
+            display: none;
+            margin-top: 14px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: rgba(239, 107, 107, 0.12);
+            color: var(--error);
+        }
+
+        #rom-error.visible {
+            display: block;
+        }
+
+        .rom-privacy {
+            margin: 16px 0 0 !important;
+            font-size: 12px;
+        }
+
+        /* ZMP: where to connect (server, room, name), filled before choosing the ROM. */
+        #zmp-connect {
+            margin: 0 0 18px;
+            padding: 0 0 16px;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        #zmp-connect label {
+            display: block;
+            margin: 0 0 10px;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        #zmp-connect input {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            margin-top: 4px;
+            padding: 8px 10px;
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            background: #0b0f18;
+            color: var(--text);
+            font: inherit;
+        }
+
+        #zmp-connect input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        #zmp-connect .zmp-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        #zmp-connect .zmp-row label {
+            flex: 1;
+            min-width: 0;
+        }
+
+        #zmp-warn {
+            display: none;
+            font-size: 12px;
+            color: #e8b04a;
+        }
+
+        #zmp-warn.visible {
+            display: block;
+        }
+
+        #rom-setup.busy #zmp-connect {
+            display: none;
+        }
+
+        @media (max-width: 480px) {
+            #rom-setup {
+                padding: 20px;
+            }
+
+            #rom-versions ul {
+                columns: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+
+    <div id="loader">
+        <h1>ZMP</h1>
+        <div class="subtitle">Online co-op for Ocarina of Time · Ship of Harkinian in your browser · up to six players</div>
+        <div id="progress"><div id="progress-bar"></div></div>
+        <div id="status">Downloading…</div>
+
+        <section id="rom-setup">
+            <div id="zmp-connect">
+                <h2>Join a game</h2>
+                <p>Type the server address the host gave you. Leave it empty to play alone; you can also connect later
+                    from the game menu (Esc, then Network, then ZMP).</p>
+                <label>Server address
+                    <input id="zmp-server" type="text" autocomplete="off" spellcheck="false"
+                        placeholder="192.168.0.20:47100  or  wss://play.example.org"></label>
+                <div class="zmp-row">
+                    <label>Room <input id="zmp-room" type="text" maxlength="64" autocomplete="off" spellcheck="false"
+                            value="zmp"></label>
+                    <label>Your name <input id="zmp-name" type="text" maxlength="32" autocomplete="off"
+                            spellcheck="false"></label>
+                </div>
+                <div id="zmp-warn"></div>
+            </div>
+
+            <div id="rom-intro">
+                <h2 id="rom-title">Choose your Ocarina of Time ROM</h2>
+                <p id="rom-description">
+                    This page doesn't include any of the original game. It builds the game's graphics, sounds and text
+                    from your own ROM dump, in this tab, each time you open it. Everyone in a room must use the same
+                    ROM version.
+                </p>
+            </div>
+
+            <div id="rom-drop">
+                <button id="rom-pick" type="button">Choose ROM file</button>
+                <div>or drop it here</div>
+                <div class="rom-extensions">Accepted files: <code>.z64</code> <code>.n64</code> <code>.v64</code>
+                    (uncompressed, 32, 54 or 64 MB)</div>
+            </div>
+
+            <details id="rom-versions">
+                <summary>Supported versions</summary>
+                <ul id="rom-version-list"></ul>
+            </details>
+
+            <div id="rom-busy">
+                <h2>Preparing the game</h2>
+                <div id="rom-progress"><div id="rom-progress-bar"></div></div>
+                <div id="rom-busy-text"></div>
+                <p id="rom-busy-note">This takes about a minute. Keep this tab open.</p>
+            </div>
+
+            <div id="rom-error"></div>
+            <p class="rom-privacy">Your ROM never leaves your computer: it's read from your disk, converted in this
+                browser tab's memory and never stored or uploaded anywhere.</p>
+            <input id="rom-file" type="file" accept=".z64,.n64,.v64" hidden>
+        </section>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("canvas");
+        const loader = document.getElementById("loader");
+        const statusText = document.getElementById("status");
+        const progressBar = document.getElementById("progress-bar");
+
+        // Keep keyboard input going to the game.
+        canvas.addEventListener("mousedown", () => canvas.focus());
+
+        canvas.addEventListener("webglcontextlost", (e) => {
+            e.preventDefault();
+            showError("The WebGL context was lost. Reload the page to continue.");
+        });
+
+        function showError(message) {
+            loader.classList.remove("hidden", "rom-setup");
+            loader.classList.add("error");
+            statusText.textContent = message;
+        }
+
+        // ZMP: the connection form. Its values go to Module.zmp (read by the game at start, zmp-web.js) when the ROM is
+        // chosen. Nothing points to any server by default: the address is what the player types, or the page's own
+        // address when the page itself is served by zmp-server (zmp-server -web), or the URL's ?host=&port=&room=&name=.
+        const zmpConnect = (() => {
+            const server = document.getElementById("zmp-server");
+            const room = document.getElementById("zmp-room");
+            const name = document.getElementById("zmp-name");
+            const warn = document.getElementById("zmp-warn");
+            const DEFAULT_PORT = 47100;
+            const STORE_KEY = "zmp.connect";
+
+            const params = new URLSearchParams(location.search);
+            let saved = {};
+            try {
+                saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}") || {};
+            } catch (e) {
+                saved = {};
+            }
+            if (params.has("host")) {
+                const host = params.get("host");
+                server.value = params.has("port") && !/^wss?:\/\//.test(host) ? host + ":" + params.get("port") : host;
+            } else if (saved.server) {
+                server.value = saved.server;
+            }
+            room.value = params.get("room") || saved.room || room.value;
+            name.value = params.get("name") || saved.name || "";
+
+            // Splits what the player typed into the game's host and port: "host", "host:port", "[ipv6]:port", or a
+            // full ws:// / wss:// URL, used as it is.
+            const parse = (text) => {
+                let t = text.trim();
+                if (t === "") {
+                    return null;
+                }
+                if (/^wss?:\/\//i.test(t)) {
+                    return { host: t, port: DEFAULT_PORT };
+                }
+                t = t.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+                const m = t.match(/^(\[[^\]]+\]|[^:]+):(\d{1,5})$/);
+                if (m) {
+                    return { host: m[1], port: Number(m[2]) };
+                }
+                // (a bare IPv6 address gets the brackets a URL needs)
+                return { host: t.includes(":") && !t.startsWith("[") ? "[" + t + "]" : t, port: DEFAULT_PORT };
+            };
+
+            const check = () => {
+                const target = parse(server.value);
+                // A page opened over https may only open secure WebSockets (the browser blocks ws:// from it).
+                const insecure = target && location.protocol === "https:" && !/^wss:\/\//i.test(target.host) &&
+                    target.port !== 443;
+                warn.textContent = insecure
+                    ? "This page was opened over https, so the browser only allows secure connections: type a wss:// " +
+                        "address, or open the page over http (for example from the host's zmp-server)."
+                    : "";
+                warn.classList.toggle("visible", !!insecure);
+            };
+            server.addEventListener("input", check);
+
+            // Served by zmp-server itself (zmp-server -web)? Then the game server is this same address.
+            if (server.value === "") {
+                fetch("healthz", { cache: "no-store" })
+                    .then((r) => (r.ok ? r.text() : ""))
+                    .then((text) => {
+                        if (text.startsWith("zmp-server") && server.value === "") {
+                            server.value = (location.protocol === "https:" ? "wss://" : "") + location.host +
+                                (location.protocol === "https:" ? "/" : "");
+                            check();
+                        }
+                    })
+                    .catch(() => {});
+            }
+            check();
+
+            return {
+                apply() {
+                    const cfg = (window.Module && Module.zmp) || {};
+                    const target = parse(server.value);
+                    const roomName = room.value.trim() || "zmp";
+                    const playerName = name.value.trim();
+                    delete cfg.host;
+                    delete cfg.port;
+                    delete cfg.room;
+                    if (target) {
+                        cfg.host = target.host;
+                        cfg.port = String(target.port);
+                        cfg.room = roomName;
+                    }
+                    if (playerName) {
+                        cfg.name = playerName;
+                    }
+                    if (window.Module) {
+                        Module.zmp = cfg;
+                    }
+                    try {
+                        localStorage.setItem(STORE_KEY, JSON.stringify({ server: server.value.trim(), room: roomName,
+                            name: playerName }));
+                    } catch (e) {
+                        // (private window or blocked storage: the form simply starts empty next time)
+                    }
+                },
+            };
+        })();
+
+        // First-run ROM setup UI, used by rom-setup.js.
+        const romSetupUI = (() => {
+            const section = document.getElementById("rom-setup");
+            const drop = document.getElementById("rom-drop");
+            const fileInput = document.getElementById("rom-file");
+            const errorBox = document.getElementById("rom-error");
+            let onRomChosen = null;
+
+            const choose = (file) => {
+                if (file && onRomChosen && !section.classList.contains("busy")) {
+                    errorBox.classList.remove("visible");
+                    zmpConnect.apply();
+                    onRomChosen(file);
+                }
+            };
+            document.getElementById("rom-pick").addEventListener("click", () => fileInput.click());
+            fileInput.addEventListener("change", () => {
+                choose(fileInput.files[0]);
+                fileInput.value = "";
+            });
+            for (const type of ["dragenter", "dragover"]) {
+                loader.addEventListener(type, (e) => {
+                    e.preventDefault();
+                    drop.classList.add("dragging");
+                });
+            }
+            loader.addEventListener("dragleave", (e) => {
+                if (e.relatedTarget === null) {
+                    drop.classList.remove("dragging");
+                }
+            });
+            loader.addEventListener("drop", (e) => {
+                e.preventDefault();
+                drop.classList.remove("dragging");
+                choose(e.dataTransfer.files[0]);
+            });
+
+            return {
+                show({ versions, updated, onRomChosen: callback }) {
+                    onRomChosen = callback;
+                    document.getElementById("rom-version-list").replaceChildren(...versions.map((name) => {
+                        const item = document.createElement("li");
+                        item.textContent = name;
+                        return item;
+                    }));
+                    if (updated) {
+                        document.getElementById("rom-title").textContent = "The game was updated";
+                        document.getElementById("rom-description").textContent =
+                            "The game data needs to be built again from your ROM for this version. Your saves and " +
+                            "settings are kept.";
+                    }
+                    loader.classList.add("rom-setup");
+                },
+                setProgress(fraction, text) {
+                    section.classList.add("busy");
+                    document.getElementById("rom-progress-bar").style.width = (100 * fraction).toFixed(1) + "%";
+                    document.getElementById("rom-busy-text").textContent = text;
+                },
+                showError(message) {
+                    section.classList.remove("busy");
+                    errorBox.textContent = message;
+                    errorBox.classList.add("visible");
+                },
+                hide() {
+                    loader.classList.remove("rom-setup");
+                    statusText.textContent = "Starting…";
+                },
+            };
+        })();
+
+        var Module = {
+            canvas,
+            romSetupUI,
+            print: (...args) => console.log(...args),
+            printErr: (...args) => console.error(...args),
+            setStatus(text) {
+                // Emscripten reports download progress as "Downloading data... (loaded/total)".
+                const match = text.match(/\((\d+(?:\.\d+)?)\/(\d+)\)/);
+                if (match) {
+                    progressBar.style.width = (100 * match[1] / match[2]).toFixed(1) + "%";
+                    statusText.textContent = "Downloading game data…";
+                } else if (text) {
+                    statusText.textContent = text;
+                }
+            },
+            totalDependencies: 0,
+            monitorRunDependencies(left) {
+                this.totalDependencies = Math.max(this.totalDependencies, left);
+                if (left) {
+                    statusText.textContent = "Preparing…";
+                }
+            },
+            onRuntimeInitialized() {
+                loader.classList.add("hidden");
+                canvas.focus();
+            },
+            onAbort(what) {
+                showError("The game stopped unexpectedly: " + what);
+            },
+        };
+
+        window.addEventListener("error", (e) => showError(e.message || "Unexpected error, see the browser console."));
+    </script>
+    {{{ SCRIPT }}}
+</body>
+</html>

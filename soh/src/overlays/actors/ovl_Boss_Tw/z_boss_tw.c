@@ -6,6 +6,8 @@
 #include "soh/frame_interpolation.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/Enhancements/savestate_serialize.h"
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
+#include "soh/Zmp/Test/Mutants.h"   // ZMP
 
 #include <string.h>
 
@@ -186,6 +188,7 @@ static u8 sTwinrovaBlastType;
 static u8 sFixedBlastType;
 static u8 sFixedBlatSeq;
 static u8 sFreezeState;
+static s8 sZmpFreezeSlot; // ZMP (D-231): slot + 1 of the Link Kotake's ice froze (0 none)
 static Vec3f sShieldHitPos;
 static s16 sShieldHitYaw;
 static u8 sBeamDivertTimer;
@@ -204,7 +207,106 @@ static BossTwEffect sEffects[150];
     F(sTwInitialized)                    \
     F(sEffects)
 
-SHIP_SAVESTATE_DEFINE(BossTw, BOSS_TW_SHIP_SAVESTATE_FIELDS)
+// ZMP (family 1, INVENTARIO Twinrova row 1, D-116): the rest of the fight's statics (the room's light, the blasts,
+// the mirror shield's charge, the freeze, the beam, the cutscenes' counters) did not travel: who entered in the middle
+// of the fight had its own. The sisters and Twinrova travel as references to actors, never as addresses: who entered
+// had them NULL and the game closed in BossTw_Wait (sKoumePtr->actionFunc).
+#define BOSS_TW_ZMP_NEW_FIELDS(F) \
+    F(sEnvType)                   \
+    F(sGroundBlastType)           \
+    F(sShieldFireCharge)          \
+    F(sShieldIceCharge)           \
+    F(D_8094C854)                 \
+    F(D_8094C858)                 \
+    F(sTwinrovaBlastType)         \
+    F(sFixedBlastType)            \
+    F(sFixedBlatSeq)              \
+    F(sFreezeState)               \
+    F(sZmpFreezeSlot)             \
+    F(sShieldHitPos)              \
+    F(sShieldHitYaw)              \
+    F(sBeamDivertTimer)           \
+    F(D_8094C86F)                 \
+    F(D_8094C870)                 \
+    F(D_8094C872)                 \
+    F(D_8094C874)                 \
+    F(D_8094C876)                 \
+    F(D_8094C878)                 \
+    F(D_8094C87A)                 \
+    F(D_8094C87C)                 \
+    F(D_8094C87E)
+#define BOSS_TW_ZMP_ACTOR_REFS(R) \
+    R(sKotakePtr)                 \
+    R(sKoumePtr)                  \
+    R(sTwinrovaPtr)
+
+ZMP_SAVESTATE_DEFINE(BossTw, BOSS_TW_SHIP_SAVESTATE_FIELDS, BOSS_TW_ZMP_NEW_FIELDS, BOSS_TW_ZMP_ACTOR_REFS)
+
+// ZMP (row 2 of Twinrova, D-231): the Link Kotake's ice froze. The original has one player: its freeze effect
+// (TWEFF_PLYR_FRZ with no target) pauses, hurts and thaws "the player", which in a group is the Link in context on each
+// tick, the nearest to Twinrova. When another Link came nearer during the freeze (p29 and p32 of the 0.5.2 closure) the
+// pause flag set on the frozen Link was cleared on the other: the first stayed paused for ever and the second was
+// frozen without being hit. The freeze remembers whom it hit (sZmpFreezeSlot, in the fight's state) and works on that
+// Link.
+static Player* BossTw_ZmpFrozenPlayer(PlayState* play, Player* player) {
+    Player* frozen;
+
+    if (!Zmp_MultiActive() || (sZmpFreezeSlot <= 0) || Zmp_TestMutant("hielo_al_mas_cercano")) {
+        return player; // (mutant: the Link in context, as before)
+    }
+    frozen = Zmp_SlotPlayer(sZmpFreezeSlot - 1);
+    return (frozen != NULL) ? frozen : player;
+}
+
+// ZMP (D-231): the freeze's damage (Play_DamagePlayer hurts the player in context) goes to the frozen Link.
+static void BossTw_ZmpDamageFrozen(PlayState* play, Player* frozen) {
+    s32 back = Zmp_SlotOfPlayer(GET_PLAYER(play));
+    s32 k = Zmp_SlotOfPlayer(frozen);
+
+    if ((k >= 0) && (back >= 0) && (k != back)) {
+        Zmp_SetContext(play, k);
+        play->damagePlayer(play, -1);
+        Zmp_SetContext(play, back);
+    } else {
+        play->damagePlayer(play, -1);
+    }
+}
+
+// ZMP (row 5 of Twinrova, D-162): the blue warp appears on the east pillar (600, 230, 0) while the death cutscene still
+// holds everybody; it takes a Link within 60 of it, and a Link standing there would leave without stepping in. When it
+// appears, every present Link within 85 of it is moved out to 85, the way it stood from it (still on the pillar), as
+// Bongo Bongo's (D-155) and Morpha's (D-138).
+static void BossTw_ZmpClearWarp(PlayState* play, f32 x, f32 z) {
+    s32 k = -1;
+
+    if (!Zmp_MultiActive() || Zmp_TestMutant("portal_al_alcance_tw")) { // (mutant: as before)
+        return;
+    }
+    while ((k = Zmp_NextPresentSlot(k)) >= 0) {
+        Player* link = Zmp_SlotPlayer(k);
+        f32 dx;
+        f32 dz;
+        f32 d;
+
+        if (link == NULL) {
+            continue;
+        }
+        dx = link->actor.world.pos.x - x;
+        dz = link->actor.world.pos.z - z;
+        d = sqrtf(SQ(dx) + SQ(dz));
+        if (d >= 85.0f) {
+            continue;
+        }
+        if (d < 1.0f) {
+            dx = 0.0f;
+            dz = d = 1.0f;
+        }
+        link->actor.world.pos.x = x + dx / d * 85.0f;
+        link->actor.world.pos.z = z + dz / d * 85.0f;
+        link->actor.prevPos = link->actor.home.pos = link->actor.world.pos;
+        link->actor.speedXZ = 0.0f;
+    }
+}
 
 void BossTw_AddDotEffect(PlayState* play, Vec3f* initalPos, Vec3f* initalSpeed, Vec3f* accel, f32 scale, s16 args,
                          s16 countLimit) {
@@ -471,6 +573,7 @@ void BossTw_Init(Actor* thisx, PlayState* play2) {
         D_8094C874 = D_8094C876 = D_8094C878 = D_8094C87A = D_8094C87C = D_8094C87E = D_8094C870 = D_8094C86F =
             D_8094C872 = sBeamDivertTimer = sEnvType = sGroundBlastType = sFreezeState = sTwinrovaBlastType =
                 sFixedBlatSeq = sShieldFireCharge = sShieldIceCharge = 0;
+        sZmpFreezeSlot = 0; // ZMP (D-231)
 
         D_8094C858 = D_8094C854 = 0.0f;
         sFixedBlastType = Rand_ZeroFloat(1.99f);
@@ -789,6 +892,7 @@ s32 BossTw_BeamHitPlayerCheck(BossTw* this, PlayState* play) {
             if (this->actor.params == 0) {
                 if (sFreezeState == 0) {
                     sFreezeState = 1;
+                    sZmpFreezeSlot = Zmp_SlotOfPlayer(player) + 1; // ZMP (D-231): the Link the beam hit
                 }
             } else if (!player->bodyIsBurning) {
                 for (i = 0; i < ARRAY_COUNT(player->bodyFlameTimers); i++) {
@@ -2791,6 +2895,7 @@ void BossTw_TwinrovaDeathCS(BossTw* this, PlayState* play) {
                 Player_SetCsActionWithHaltedActors(play, &this->actor, 7);
                 Audio_QueueSeqCmd(SEQ_PLAYER_BGM_MAIN << 24 | NA_BGM_BOSS_CLEAR);
                 if (GameInteractor_Should(VB_SPAWN_BLUE_WARP, true, this)) {
+                    BossTw_ZmpClearWarp(play, 600.0f, 0.0f); // ZMP (row 5, D-162)
                     Actor_SpawnAsChild(&play->actorCtx, &this->actor, play, ACTOR_DOOR_WARP1, 600.0f, 230.0f, 0.0f, 0,
                                        0, 0, WARP_DUNGEON_ADULT);
                 }
@@ -3140,10 +3245,12 @@ void BossTw_TwinrovaUpdate(Actor* thisx, PlayState* play2) {
     BossTw_UpdateEffects(play);
 
     if (sFreezeState == 1) {
+        Player* frozen = BossTw_ZmpFrozenPlayer(play, player); // ZMP (D-231)
+
         sFreezeState = 2;
         BossTw_AddPlayerFreezeEffect(play, NULL);
-        Sfx_PlaySfxAtPos(&player->actor.projectedPos, NA_SE_VO_LI_FREEZE);
-        Sfx_PlaySfxAtPos(&player->actor.projectedPos, NA_SE_PL_FREEZE);
+        Sfx_PlaySfxAtPos(&frozen->actor.projectedPos, NA_SE_VO_LI_FREEZE);
+        Sfx_PlaySfxAtPos(&frozen->actor.projectedPos, NA_SE_PL_FREEZE);
 
         if (sShieldFireCharge != 0) {
             sShieldFireCharge = 4;
@@ -3517,6 +3624,7 @@ void BossTw_Draw(Actor* thisx, PlayState* play2) {
                     (this->workf[UNK_F11] > 200.0f)) {
                     sFreezeState = 1;
                     sTwinrovaPtr->timers[2] = 100;
+                    sZmpFreezeSlot = Zmp_SlotOfPlayer(player) + 1; // ZMP (D-231): the Link on the ground blast
                 }
             }
 
@@ -4766,6 +4874,8 @@ void BossTw_UpdateEffects(PlayState* play) {
                     }
                 }
             } else if (eff->type == TWEFF_PLYR_FRZ) {
+                Player* frozen = BossTw_ZmpFrozenPlayer(play, player); // ZMP (D-231): whom the ice hit, not the context
+
                 if (eff->work[EFF_ARGS] < eff->frame) {
                     phi_f0 = 1.0f;
 
@@ -4778,8 +4888,9 @@ void BossTw_UpdateEffects(PlayState* play) {
                     if (eff->workf[EFF_SCALE] == 0.0f) {
                         eff->type = TWEFF_NONE;
                         if (eff->target == NULL) {
-                            player->stateFlags2 &= ~PLAYER_STATE2_PAUSE_MOST_UPDATING;
+                            frozen->stateFlags2 &= ~PLAYER_STATE2_PAUSE_MOST_UPDATING;
                             sFreezeState = 0;
+                            sZmpFreezeSlot = 0; // ZMP (D-231)
                         }
                     }
                 } else {
@@ -4794,9 +4905,9 @@ void BossTw_UpdateEffects(PlayState* play) {
 
                         if (eff->workf[EFF_ROLL] >= 0.8f) {
                             eff->workf[EFF_ROLL] -= 0.8f;
-                            player->stateFlags2 |= PLAYER_STATE2_PAUSE_MOST_UPDATING;
+                            frozen->stateFlags2 |= PLAYER_STATE2_PAUSE_MOST_UPDATING;
                         } else {
-                            player->stateFlags2 &= ~PLAYER_STATE2_PAUSE_MOST_UPDATING;
+                            frozen->stateFlags2 &= ~PLAYER_STATE2_PAUSE_MOST_UPDATING;
                         }
 
                         if ((sKotakePtr->workf[UNK_F11] > 10.0f) && (sKotakePtr->workf[UNK_F11] < 200.0f)) {
@@ -4804,7 +4915,7 @@ void BossTw_UpdateEffects(PlayState* play) {
                         }
 
                         if (!(play->gameplayFrames & 1)) {
-                            play->damagePlayer(play, -1);
+                            BossTw_ZmpDamageFrozen(play, frozen); // ZMP (D-231)
                         }
                     } else {
                         Math_ApproachF(&eff->workf[EFF_SCALE], 0.042f, 1.0f, 0.002f);
@@ -4814,9 +4925,9 @@ void BossTw_UpdateEffects(PlayState* play) {
                         spA6 = Rand_ZeroFloat(17.9f);
 
                         if (eff->target == NULL) {
-                            spC0.x = player->bodyPartsPos[spA6].x + Rand_CenteredFloat(5.0f);
-                            spC0.y = player->bodyPartsPos[spA6].y + Rand_CenteredFloat(5.0f);
-                            spC0.z = player->bodyPartsPos[spA6].z + Rand_CenteredFloat(5.0f);
+                            spC0.x = frozen->bodyPartsPos[spA6].x + Rand_CenteredFloat(5.0f);
+                            spC0.y = frozen->bodyPartsPos[spA6].y + Rand_CenteredFloat(5.0f);
+                            spC0.z = frozen->bodyPartsPos[spA6].z + Rand_CenteredFloat(5.0f);
                             phi_f22 = 10.0f;
                         } else {
                             unk44 = eff->target;
@@ -5461,4 +5572,32 @@ void BossTw_TwinrovaLaugh(BossTw* this, PlayState* play) {
 void BossTw_Reset(void) {
     sTwInitialized = false;
     memset(sEffects, 0, sizeof(sEffects));
+}
+
+// ZMP phase 6 scenario tests (f6_spirit.py, D-159): what the bots cannot aim. In the context of the player the event
+// names (Scenario.cpp):
+//   what 0, "stun": the charged blast sent back by a Mirror Shield reaches Twinrova (the flag the blast sets,
+//           BossTw_BlastUpdate; her own update stuns her), while she flies, charges, shoots or spins after the merge.
+// ZMP (D-222): read only, for the harness's query.actors (row 3 of Twinrova: the Mirror Shield's charge is one for
+// all).
+void BossTw_ZmpCharges(s32* fire, s32* ice, s32* freeze) {
+    *fire = sShieldFireCharge;
+    *ice = sShieldIceCharge;
+    *freeze = sFreezeState;
+}
+
+s32 BossTw_ZmpStage(PlayState* play, s32 what) {
+    BossTw* tw = sTwinrovaPtr;
+
+    if ((tw == NULL) || (what != 0)) {
+        return 0;
+    }
+    if ((tw->actionFunc != BossTw_TwinrovaArriveAtTarget) && (tw->actionFunc != BossTw_TwinrovaChargeBlast) &&
+        (tw->actionFunc != BossTw_TwinrovaShootBlast) && (tw->actionFunc != BossTw_TwinrovaDoneBlastShoot) &&
+        (tw->actionFunc != BossTw_TwinrovaFly) && (tw->actionFunc != BossTw_TwinrovaSpin) &&
+        (tw->actionFunc != BossTw_TwinrovaLaugh)) {
+        return 0;
+    }
+    tw->twinrovaStun = 1;
+    return 1;
 }

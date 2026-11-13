@@ -1,4 +1,23 @@
 #include "global.h"
+#ifdef _MSC_VER
+#include <intrin.h>
+// ZMP: debug trace of who draws random numbers (desync hunting, off unless gZmpRandTrace is set)
+extern s32 gZmpRandTrace;
+void Zmp_RandTraceHit(void* caller);
+// ZMP (D-192): in a session, a random number drawn while a frame is presented or from another thread than the game's
+// is the drawing writing the simulation's generator: counted and logged with its caller (Zmp.cpp)
+extern s32 gZmpRandGuard;
+void Zmp_RandGuardHit(void* caller);
+#define ZMP_RAND_TRACE()                    \
+    if (gZmpRandTrace) {                    \
+        Zmp_RandTraceHit(_ReturnAddress()); \
+    }                                       \
+    if (gZmpRandGuard) {                    \
+        Zmp_RandGuardHit(_ReturnAddress()); \
+    }
+#else
+#define ZMP_RAND_TRACE()
+#endif
 
 // The latest generated random number, used to generate the next number in the sequence.
 static u32 sRandInt = 1;
@@ -10,6 +29,7 @@ static u32 sRandFloat;
  * Gets the next integer in the sequence of pseudo-random numbers.
  */
 u32 Rand_Next(void) {
+    ZMP_RAND_TRACE(); // ZMP
     return sRandInt = (sRandInt * 1664525) + 1013904223;
 }
 
@@ -20,12 +40,27 @@ void Rand_Seed(u32 seed) {
     sRandInt = seed;
 }
 
+// ZMP: RNG state access for the state hash and the portable save state (PLAN.md 8.2, 8.3).
+u32 Rand_ZmpGetState(u32* randFloat) {
+    if (randFloat != NULL) {
+        *randFloat = sRandFloat;
+    }
+    return sRandInt;
+}
+
+// ZMP
+void Rand_ZmpSetState(u32 randInt, u32 randFloat) {
+    sRandInt = randInt;
+    sRandFloat = randFloat;
+}
+
 /**
  * Returns a pseudo-random floating-point number between 0.0f and 1.0f, by generating
  * the next integer and masking it to an IEEE-754 compliant floating-point number
  * between 1.0f and 2.0f, returning the result subtract 1.0f.
  */
 f32 Rand_ZeroOne(void) {
+    ZMP_RAND_TRACE(); // ZMP
     sRandInt = (sRandInt * 1664525) + 1013904223;
     sRandFloat = ((sRandInt >> 9) | 0x3F800000);
     return *((f32*)&sRandFloat) - 1.0f;
@@ -36,6 +71,7 @@ f32 Rand_ZeroOne(void) {
  * manner in which Rand_ZeroOne generates its result.
  */
 f32 Rand_Centered(void) {
+    ZMP_RAND_TRACE(); // ZMP
     sRandInt = (sRandInt * 1664525) + 1013904223;
     sRandFloat = ((sRandInt >> 9) | 0x3F800000);
     return *((f32*)&sRandFloat) - 1.5f;

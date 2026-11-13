@@ -1,5 +1,6 @@
 #include <libultraship/libultra.h>
 #include "global.h"
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
 #include "vt.h"
 
 #include <string.h>
@@ -723,6 +724,13 @@ void Camera_CopyDataToRegs(Camera* camera, s16 mode) {
         osSyncPrintf("camera: res: stat (%d/%d/%d)\n", camera->thisIdx, camera->setting, mode);
     }
 
+    // ZMP: the original only gets here with a mode its setting has. A table read with a mode the setting does not
+    // have reads past the setting's list of modes (found when a Link appeared with the camera mode of the player
+    // who was already in a room with a fixed background). It is counted and logged; tests require zero.
+    if (camera->setting < 0 || camera->setting >= CAM_SET_MAX || mode < 0 || mode >= CAM_MODE_MAX ||
+        !(sCameraSettings[camera->setting].validModes & (1 << mode))) {
+        Zmp_OnInvalidCameraMode(camera->setting, mode);
+    }
     values = sCameraSettings[camera->setting].cameraModes[mode].values;
 
     for (i = 0; i < sCameraSettings[camera->setting].cameraModes[mode].valueCnt; i++) {
@@ -758,6 +766,14 @@ s32 Camera_CopyPREGToModeValues(Camera* camera) {
 void Camera_UpdateInterface(s16 flags) {
     s16 interfaceAlpha;
 
+    // ZMP: in multiplayer a player's own cameras (its main camera, its private cutscene cameras) only drive that
+    // player's letterbox and HUD, drawn on its own screen (soh/soh/Zmp/Sim/Present.cpp); the shared ones are driven
+    // by the cutscenes everybody watches
+    if (gZmpCameraInterfaceMuted) {
+        Zmp_RecordCameraInterface(gZmpCameraInterfaceMuted - 1, flags);
+        return;
+    }
+
     if ((flags & SHRINKWIN_MASK) != SHRINKWIN_MASK) {
         switch (flags & SHRINKWINVAL_MASK) {
             case 0x1000:
@@ -790,6 +806,18 @@ void Camera_UpdateInterface(s16 flags) {
             sCameraInterfaceAlpha = interfaceAlpha;
             Interface_ChangeHudVisibilityMode(sCameraInterfaceAlpha);
         }
+    }
+}
+
+// ZMP: a cutscene everybody watches starts or ends: the cached interface values are forgotten (the next global camera
+// sets its letterbox and HUD again), and at the end the shared letterbox and HUD go back to normal (the players' own
+// cameras do not drive them in multiplayer).
+void Camera_ZmpResetInterface(s32 end) {
+    sCameraShrinkWindowVal = 0;
+    sCameraInterfaceAlpha = 0;
+    if (end) {
+        Letterbox_SetSizeTarget(0);
+        Interface_ChangeHudVisibilityMode(HUD_VISIBILITY_ALL);
     }
 }
 
@@ -7344,11 +7372,16 @@ s32 Camera_UpdateWater(Camera* camera) {
         if (!(camera->unk_14C & 0x100)) {
             camera->unk_14C |= 0x100;
             osSyncPrintf("kankyo changed water, sound on\n");
-            Environment_EnableUnderwaterLights(camera->play, waterLightsIndex);
+            // ZMP: in a session the water's lights are this player's own picture; the scene's stay as they are
+            if (!Zmp_OnUnderwaterLights(camera->play, waterLightsIndex)) {
+                Environment_EnableUnderwaterLights(camera->play, waterLightsIndex);
+            }
             camera->waterDistortionTimer = 80;
         }
 
-        Audio_SetExtraFilter(0x20);
+        if (Zmp_HearsCameraWater(camera)) { // ZMP: heard by the player whose camera it is
+            Audio_SetExtraFilter(0x20);
+        }
 
         if (PREG(81)) {
             Quake_RemoveFromIdx(*quakeId);
@@ -7376,14 +7409,18 @@ s32 Camera_UpdateWater(Camera* camera) {
         if (camera->unk_14C & 0x100) {
             camera->unk_14C &= ~0x100;
             osSyncPrintf("kankyo changed water off, sound off\n");
-            Environment_DisableUnderwaterLights(camera->play);
+            if (!Zmp_OnUnderwaterLights(camera->play, -1)) { // ZMP: see above
+                Environment_DisableUnderwaterLights(camera->play);
+            }
             if (*quakeId != 0) {
                 Quake_RemoveFromIdx(*quakeId);
             }
             camera->waterDistortionTimer = 0;
             camera->distortionFlags = 0;
         }
-        Audio_SetExtraFilter(0);
+        if (Zmp_HearsCameraWater(camera)) { // ZMP: heard by the player whose camera it is
+            Audio_SetExtraFilter(0);
+        }
     }
     //! @bug: doesn't always return a value, but sometimes does.
 }

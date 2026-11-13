@@ -1,4 +1,5 @@
 #include "global.h"
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "objects/gameplay_field_keep/gameplay_field_keep.h"
 #include "objects/object_link_boy/object_link_boy.h"
@@ -1082,6 +1083,12 @@ void Player_DrawImpl(PlayState* play, void** skeleton, Vec3s* jointTable, s32 dL
         color = &sTemp;
     }
 
+    // ZMP: in multiplayer every player's tunic has its own tone (cosmetic, local; the drawn player is the context)
+    Color_RGB8 zmpTunic;
+    if (Zmp_TunicColor(tunic, color, &zmpTunic)) {
+        color = &zmpTunic;
+    }
+
     if (GameInteractor_Should(VB_APPLY_TUNIC_COLOR, true, data, color)) {
         gDPSetEnvColor(POLY_OPA_DISP++, color->r, color->g, color->b, 0);
     }
@@ -1948,7 +1955,8 @@ void Player_PostLimbDrawGameplay(PlayState* play, s32 limbIndex, Gfx** dList, Ve
                     Matrix_MtxFToYXZRotS(&sp44, &heldActor->world.rot, 0);
                     heldActor->shape.rot = heldActor->world.rot;
 
-                    if (func_8002DD78(this) != 0) {
+                    // ZMP: the aiming reticle is drawn only on the aiming player's screen
+                    if ((func_8002DD78(this) != 0) && Zmp_IsLocalAudioPlayer(this)) {
                         Matrix_Translate(500.0f, 300.0f, 0.0f, MTXMODE_APPLY);
                         Player_DrawHookshotReticle(
                             play, this,

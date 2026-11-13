@@ -5,6 +5,8 @@
  */
 
 #include "z_en_okarina_tag.h"
+#include "soh/Zmp/Test/Mutants.h"   // ZMP
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
 #include "scenes/misc/hakaana_ouke/hakaana_ouke_scene.h"
 #include "scenes/overworld/spot02/spot02_scene.h"
 #include "vt.h"
@@ -107,6 +109,34 @@ void EnOkarinaTag_Init(Actor* thisx, PlayState* play) {
     }
 }
 
+// ZMP (row B9 of the Shadow Temple, D-152): a spot that listens to the ocarina marks "the player" standing by it (the
+// Link nearest to it) as the one that may play for it; whoever else took the ocarina out by it played freely and the
+// spot never heard the song (the ship of the Shadow Temple did not move for the one who played two steps further).
+// In a group every present Link standing by it is marked the same way; the spot then runs with the one who plays
+// (Players.cpp, ContextSlot).
+static void EnOkarinaTag_ZmpMarkEveryone(EnOkarinaTag* this, PlayState* play, s32 nearFlag) {
+    Player* context = GET_PLAYER(play);
+    s32 k = -1;
+
+    if (!Zmp_MultiActive() || Zmp_TestMutant("ocarina_al_mas_cercano")) { // (mutant: the nearest only, as before)
+        return;
+    }
+    while ((k = Zmp_NextPresentSlot(k)) >= 0) {
+        Player* link = Zmp_SlotPlayer(k);
+
+        if ((link == NULL) || (link == context) ||
+            (Actor_WorldDistXZToActor(&this->actor, &link->actor) >= (50.0f + this->interactRange)) ||
+            (fabsf(link->actor.world.pos.y - this->actor.world.pos.y) >= 40.0f)) {
+            continue;
+        }
+        if (nearFlag) {
+            link->stateFlags2 |= PLAYER_STATE2_NEAR_OCARINA_ACTOR;
+        } else {
+            link->unk_6A8 = &this->actor;
+        }
+    }
+}
+
 void func_80ABEF2C(EnOkarinaTag* this, PlayState* play) {
     Player* player;
     u16 ocarinaSong;
@@ -118,6 +148,7 @@ void func_80ABEF2C(EnOkarinaTag* this, PlayState* play) {
         this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
     } else {
         if ((this->ocarinaSong != 6) || (gSaveContext.scarecrowSpawnSongSet)) {
+            EnOkarinaTag_ZmpMarkEveryone(this, play, false); // ZMP (B9, D-152)
             if (player->stateFlags2 & PLAYER_STATE2_ATTEMPT_PLAY_FOR_ACTOR) {
                 // "North! ! ! ! !"
                 osSyncPrintf(VT_FGCOL(RED) "☆☆☆☆☆ 北！！！！！ ☆☆☆☆☆ %f\n" VT_RST, this->actor.xzDistToPlayer);
@@ -154,6 +185,7 @@ void func_80ABF0CC(EnOkarinaTag* this, PlayState* play) {
             }
             if (play->sceneNum == SCENE_WATER_TEMPLE) {
                 play->msgCtx.msgMode = MSGMODE_PAUSED;
+                Zmp_WaterSongPaused(play); // ZMP (A8, D-143): the water closes this player's box, not its nearest's
             }
             if ((play->sceneNum != SCENE_GREAT_FAIRYS_FOUNTAIN_MAGIC) &&
                 (play->sceneNum != SCENE_GREAT_FAIRYS_FOUNTAIN_SPELLS)) {
@@ -191,6 +223,7 @@ void func_80ABF28C(EnOkarinaTag* this, PlayState* play) {
 
     this->unk_15A++;
     if ((this->ocarinaSong != 6) || (gSaveContext.scarecrowSpawnSongSet)) {
+        EnOkarinaTag_ZmpMarkEveryone(this, play, true); // ZMP (B9, D-152)
         if (GameInteractor_Should(VB_OKARINA_TAG_COMPLETED,
                                   (this->switchFlag >= 0) && (Flags_GetSwitch(play, this->switchFlag)), this)) {
             this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;

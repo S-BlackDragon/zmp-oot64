@@ -1,0 +1,238 @@
+#pragma once
+
+// Mutation test of the test suite (docs/DECISIONES.md D-079): bugs this project already had, brought back on purpose,
+// one at a time, to check that the suite still catches them. A mutant exists only in the test build (ZMP_HARNESS):
+// in the demo Zmp_TestMutant() is the constant 0 and the mutated branches are dead code. It is chosen with the
+// environment variable ZMP_MUTANT (the suite's --mutante) or the CVar gZmp.Test.Mutant. Several at once with "+"
+// ("barras_entrar+camara_heredada"): to bring back a past bug that needed two old behaviours together.
+//
+// Known not to reproduce their bug any more (2026-10-04, reports/suite_rapida/HALLAZGOS.md, AH):
+// barras_entrar (every active camera asks for its letterbox and HUD each frame, so the joiner's own camera asks for
+// the normal screen when the cutscene ends) and cierre_casa (the state is loaded in the middle of leaving the house,
+// as before D-064, and the game goes on). They are kept as the record of that.
+//
+//   estado_texto           a cutscene's text statics do not travel in the group state (D-065): desync on entering
+//                          during a cutscene's text
+//   estado_efectos         the effects' search index does not travel in the group state (D-044)
+//   sabotaje_actor         one machine changes an actor outside the simulation (what the resync test does by hand)
+//   robo_foco              a test window takes the PC's focus when it opens (D-063); it gives it back at once
+//   sonido_sin_foco        a window without the real focus plays sound when a test says it has the focus (D-063)
+//   congelon_entrar        who is playing freezes when somebody enters its group (D-070)
+//   barras_entrar          black bars and no HUD after a group cutscene for who entered during it (D-059)
+//   guardado_no_anfitrion  a PC that is not the host writes its save file (D-058)
+//   cierre_casa            the group state is loaded in the middle of the player's own scene change (D-064: the game
+//                          closed leaving Link's house into an occupied forest)
+//   estado_temblor         the quakes in progress do not travel in the group state (D-081): desync on entering
+//                          during a quake
+//   camara_heredada        a Link that appears keeps the camera mode of the player who was there (D-080): the game
+//                          reads past a camera table in rooms with a fixed background
+//   cuadro_crash           a test instance that crashes keeps the game's "Crash" dialog on the screen and never
+//                          ends by itself
+//   escena_al_mas_cercano  during a cutscene everybody watches, actors act on the nearest player and not on the
+//                          player of the scene (D-084): that player stays frozen after Gohma's death
+//   portal_sobre_companero Gohma's blue warp avoids only the player of the scene, not the others (D-099): it can
+//                          appear under another player, who leaves through it without stepping in
+//   portal_del_fundador    a group founded in place starts with the blue warp's player at slot 0 (D-099): in that
+//                          scene the warp acts only on slot 0 while it is there
+//   hada_de_todos          nothing records who is reviving with a fairy (finding AB): its darkening, its black bars
+//                          and its black fill are drawn on every screen once the group has a "nobody" owner
+//   menu_sin_dibujo        the pause menu does not run its draw in the frames that capture the pause background
+//                          again (D-085): with no frame rendered since START the game closes when the menu opens
+//   puerta_al_mas_cercano  a door attends only the nearest player (D-086): a fighter standing at the bars of a
+//                          combat room from inside keeps its companions out
+//   tabla_sin_cerrojo      the library writes "this file does not exist" into its resource table without the lock
+//                          (finding T): two threads loading at once break the table and the game closes or hangs
+//   descarga_sin_cerrojo   the library unloads a resource as it did: it looks into the table without the lock and
+//                          destroys the entry with the lock held (finding T)
+//   archivo_fantasma       the library adds an entry to its file table, with no lock, for every file it is asked for
+//                          and does not have (finding T)
+//   gui_sin_iniciar        the window object's "which backend" field holds the value it had in the starts that died
+//                          (finding R; the library starts it at zero now): the game closes while starting
+//   vigilante_con_simbolos the hang watchdog and the state load use the system's symbol library (finding X): a game
+//                          thread that takes more than 5 s inside it hangs for good, and nothing is written
+//   agua_compartida        every player's camera changes the scene's lights and the sound when its eye goes under
+//                          water or comes out, and a Link that appears copies the water flags of the camera that was
+//                          there (finding Y): everybody sees and hears the water of one, the lights can stay on for
+//                          good, and who enters the group meanwhile differs from the rest (resynchronization)
+//   entrada_sin_adelanto   a player entering a group sends its inputs no earlier when they arrive late (D-094): over
+//                          a connection with latency its Link can take many seconds to appear
+//   entrada_sin_alcance    a client behind its group draws a frame for every tick it plays to catch up (D-191): a PC
+//                          that can only just draw 20 frames a second never reaches the group, and whoever enters never
+//                          appears
+//   (ritmo_sin_dibujo, D-101: removed with D-191; whoever enters catches up without drawing the ticks it owes, so an
+//                          accelerated clock that asks too much no longer leaves anybody out, and no test tells it
+//                          apart)
+//   dibujo_escribe_simulacion every frame actually drawn draws a random number from the game's generator (D-192): the
+//                          drawing writes the simulation, and a PC that draws fewer frames (catching up, in the
+//                          background) goes another way
+//   captura_por_ventana    a screenshot asks the desktop for the game's window (finding AD, D-102): a window the
+//                          desktop does not show is "not found", or its capture is whatever the screen has there
+//   oferta_al_mas_cercano  something to lift is offered only to the nearest player (finding AK, D-109): the one
+//                          facing a bomb flower or Ruto cannot pick it up while another stands nearer
+//   sale_con_carga         a Link that goes away does not let go of what it carries (finding AJ, D-108): Ruto
+//                          keeps a pointer to the freed Link and nobody can carry her again
+//   aparicion_sin_mirar    the spawn spot of a Link that appears next to others is searched as before phase 6
+//                          (finding AI, D-107): up to 315 units to a side, through walls, onto voids, lava, exits
+//                          and other Links (the group split in Phantom Ganon's room with six players)
+//   ruto_al_mas_cercano    Ruto by her blue warp acts on the player nearest to her, not on the one in the warp (B1,
+//                          D-113): another player standing by her is teleported, turned and frozen
+//   portal_sin_soltar      a player who leaves the group or the game while in the blue warp does not free it (B1,
+//                          D-113): the warp, and Ruto, go on with whoever is nearest, who is taken in its place
+//   salida_cuenta_doble    a player who walks out of its group keeps as its own what the group changed in that tick
+//                          and the rupees still coming in (finding AL, D-115): the next group it founds adds them a
+//                          second time (77 rupees and a new player saw 4)
+//   estaticas_de_jefe      the statics D-116 put into the group state (bosses' cameras, Bongo Bongo's hands,
+//                          Twinrova's fight and its sisters, Dark Link's AI, the hidden items' tags, the sandstorm's
+//                          colours, Ganondorf's windows) and the actor pointers it made references are not loaded:
+//                          this process keeps its own, as before (family 1: whoever enters a boss fight in the middle
+//                          computes something else)
+//   puerta_sin_esperar     the boss door opens for whoever pushes it, as before D-117: that player goes into the
+//                          boss's room alone and sees the intro without the group
+//   puerta_cuenta_al_de_fuera the boss door also waits for the players of the room who play somewhere else (another
+//                          group): it never opens while anybody is away from the dungeon (D-117, case a)
+//   agua_no_viaja          the scene's water boxes do not travel in the group state (A3, D-118): whoever is given the
+//                          state keeps the water levels of its own copy of the scene (Morpha's water, the Water Temple)
+//   esqueleto_ajeno        SoH's list of skeletons to patch (addresses of the skelAnimes this process initialised)
+//                          survives a state load and rewrites a Link's skeleton in multiplayer (finding AN, D-118): the
+//                          founder's adult Link gets the child skeleton on the machines that were child before joining
+//   tambor_al_del_contexto Bongo Bongo's drum bounces "the player" of its context when any Link stands on it (finding
+//                          AO, D-119): the player of the intro, in the air, is kicked up by every beat while the others
+//                          stand on the drum and hangs there with the order to let it go; those on it never bounce
+//   caido_retenido         a downed Link is given the "wait" order of a scripted group cutscene and keeps it when the
+//                          cutscene ends (finding AQ, D-120): it stays "in a cutscene" until it leaves the room
+//   intro_fhg_mas_cercano  Phantom Ganon's intro waits for the player nearest to its horse (under the middle of the
+//                          arena) in the middle and then at the gate (row F2, D-123): with a partner in the middle the
+//                          one at the gate never starts it
+//   rayo_al_del_contexto   the shocks and bursts of Phantom Ganon's lightning hurt only while the Link nearest to them
+//                          is not invincible (row F4, D-124): they go through the others while that one was just hurt
+//   destello_de_todos      the white flash of the burst of Phantom Ganon's ball that hit one Link is drawn on every
+//                          screen (row F4, D-124)
+//   fuera_de_los_barrotes  a Link that comes into Phantom Ganon's room once its bars are up stays outside them, at the
+//                          room's entrance, with no way in (row F3, D-125)
+//   texto_de_uno           the text of the player a group cutscene is about is shown on that player's screen only
+//                          (row F6, D-126): Phantom Ganon's last words were read by one of the six
+//   intro_fd_mas_cercano   Volvagia's intro waits for the player nearest to Volvagia (under the middle of the arena)
+//                          at the edge of the arena (row V3, D-128): with partners nearer to the middle it never starts
+//   aliento_al_del_contexto  a flame of Volvagia's breath burns only the Link nearest to its body, and its hit makes
+//                          the fire harmless for everybody for 50 ticks (row V2, D-129)
+//   portal_al_alcance_fd   Volvagia's blue warp appears over the middle hole with a Link in its reach, left there by
+//                          the death cutscene's arc (row V1, D-130): that Link leaves without stepping in
+//   salida_al_mas_cercano  Volvagia's head bursting out of its hole pushes back and hurts only the nearest Link within
+//   120
+//                          (row V4, D-132): a Link behind the head is left untouched
+//   calavera_tapada        in Volvagia's death cutscene its player faces wherever it faced, and the arc of the others
+//                          leaves two of them between the camera and the falling skull (D-131): every screen sees a
+//                          back
+//   agarre_al_mas_cercano  an actor that holds a Link acts on the Link nearest to it on every tick (family T1, D-134):
+//                          Morpha's tentacle drags and shakes a partner by its base and leaves the grabbed one held
+//   epona_de_todos         one Epona for the whole group, as before D-233: the first Link's song brings the one horse
+//                          to it, another Link mounts it, where it was left is the group's (not one Epona per Link)
+//   carrera_de_uno         Ingo's race is run by the Link who accepted it alone, as D-222 (not by every Link at once,
+//                          D-234): the others stay on foot at the entrance and the judge follows one rider
+//   epona_sin_memoria      where each Link left its Epona is forgotten when the game is loaded again (the saved block
+//                          carries it since D-234): every Epona is back at her default spot
+//   hielo_al_mas_cercano   Kotake's ice freezes, hurts and thaws the Link in context on each tick, the nearest, not the
+//                          one it hit (row 2 of Twinrova, D-231): a partner that comes nearer during the freeze is
+//                          frozen without being hit and the first one stays paused for ever
+//   sacudida_global        Morpha's tentacle shaking a Link starts a cutscene everybody watches (row A2, D-135): the
+//                          other five stand frozen up to 150 ticks and nobody can free the grabbed one
+//   intro_mo_mas_cercano   Morpha's intro waits for the player nearest to its core, far beyond the door (row A4,
+//                          D-136): with partners by the door, the one on a platform never starts it
+//   arco_en_el_portal      the arc of a group cutscene may put a Link within a blue warp's reach (D-138): Morpha's
+//                          warp appears before its death cutscene ends and takes that Link without stepping in
+//   postura_inclinada      Morpha's tentacles level the body of the player in context only (D-140): a Link thrown by
+//                          the shake stays tilted on its side for the rest of the fight
+//   gancho_del_contexto    a fired hookshot binds itself to the player in its context (D-141): fired as a group
+//                          cutscene begins, it is bound to the cutscene's player and killed; its Link waits for ever
+//   aviso_del_agua_abierto Navi's warning about Morpha's water stays open over the intro when it is not the intro
+//                          player's (D-136): it covers the intro on every screen
+//   nucleo_esconde_por_uno Morpha's core hides while the Link nearest to it is deep in the water (row A5, D-137): one
+//                          partner on the bottom stops the fight for everybody above
+//   portal_al_alcance_mo   Morpha's blue warp appears on the bottom of the pool with a Link in its reach (row A7,
+//                          D-138): that Link leaves without stepping in//   botones_del_otro       the item buttons
+//                          follow the anchor's rules only (U1, D-142): the others keep the ones they appeared with
+//                          (greyed for ever after the Water Temple's entrance) and never lose them under the water
+//   agua_al_mas_cercano    the Water Temple's water closes the text box of the player nearest to it (A8, D-143): the
+//                          one who played the Lullaby stays frozen with the ocarina
+//   arco_no_sigue_traslado  a boss's death script puts the player of its cutscene by writing its position alone
+//                          (D-201): thrown off Bongo Bongo's drum it stays below, out of its spot, and the arc of the
+//                          other five is not laid out around it
+//   bloque_sala_del_contexto  a platform of the Water Temple moves its hookshot block only when the player in its
+//                          context stands in its room (A14, D-144): the block stays behind
+//   ruto_lector_mas_cercano  Ruto's encounter in the Water Temple reads the text box of the player nearest to her (A15,
+//                          D-145): with a partner by her she never swims up
+//   lente_compartida       one Lens of Truth for everybody (T3, D-146): a second player's lens turns the first one's
+//                          off
+//   estaticas_de_jefe      (also covers D-148: the Shadow Temple's truth spinner, spinning pots and spiked walls)
+//   muros_al_del_contexto  the Shadow Temple's spiked walls crush only the player in their context (B8, D-149): a
+//                          second Link between them stays there
+//   trampa_al_del_contexto the guillotine's blade and the spiked walls' spikes hit only the player in their context
+//                          (B8, B11, D-149): of two Links under the blade one is cut
+//   mano_al_mas_cercano    a Wallmaster lifts the player nearest to it (B13, D-150): it takes a partner up and leaves
+//                          the one it caught on the floor
+//   grito_al_mas_cercano   a ReDead's scream freezes only the player nearest to it (B13, D-151)
+//   ocarina_al_mas_cercano a spot that listens to the ocarina hears only the player nearest to it (B9, D-152): the
+//                          one who plays the Lullaby two steps further does not move the ship
+//   barco_al_grupo         the sinking ship of the Shadow Temple voids out the whole group (B9, D-153)
+//   mano_que_tuerce        Bongo Bongo's swinging hand straightens the player nearest to it once it lets go (D-154):
+//                          the thrown Link stays leaning on its side
+//   portal_al_alcance_sst  Bongo Bongo's blue warp appears in the middle of the drum with a Link in its reach (row B4,
+//                          D-155): that Link leaves without stepping in
+//   lluvia_del_juego       the rain is drawn with the simulation's random numbers (finding BY, D-156): each screen
+//   takes
+//                          as many as its camera asks for, and the Graveyard after Bongo Bongo desynchronizes
+//   rupias_no_viajan       the room's count of silver rupees does not travel in the group state (SP3, D-159): who
+//                          joins in the middle of a set counts from 0 and the last rupee desynchronizes
+//   bloque_al_del_contexto the silver block lets go of the player of its context when a push ends (SP1, D-160): the
+//                          Link that pushed keeps pushing
+//   espejo_al_mas_cercano  the turning cobra mirror carries and lets go of the Link nearest to it (SP1, D-160)
+//   portal_al_alcance_tw   Twinrova's blue warp appears on the east pillar with a Link in its reach (row 5, D-162)
+//   texto_del_mas_cercano  a group cutscene's text opened in the context of another Link than the cutscene's is
+//                          shown on that Link's screen only (D-163): Twinrova's sisters' last words
+//   colgado_retenido       a Link hanging from a ledge when a group cutscene ends keeps the cutscene's wait order
+//                          (finding BP, D-157): it stays "in a cutscene" until it climbs or lets go
+//   cuenta_al_dibujar      the timers (the escape's countdown) count while drawing the HUD, in the context of each
+//                          machine's own player and once per drawn frame (E1, D-164): the machines differ
+//   huida_salida_propia    an exit of the escape from Ganon's tower takes only the Link that crosses it (E2, D-165)
+//   cura_solo_contexto     the refills of Ganondorf's intro and of the escape go to the player of context only (G3,
+//                          D-166)
+//   espada_al_mas_cercano  only the Link nearest to Ganon can pick Zelda's sword up (G5, D-167)
+//   golpe_final_al_mas_cercano  only the Link nearest to Ganon's body can deal the final blow (G6, D-167)
+//   anillo_al_mas_cercano  Ganon's ring of fire burns and throws back only the Link nearest to Ganon (G6, D-167)
+//   hablar_con_camara_del_ancla  an NPC's talk offer asks "on screen?" with the anchor's picture (D-206): far from
+//                          the anchor nobody else can talk to Mido
+//   guardia_al_grupo       a courtyard guard's capture takes the whole group out of the courtyard (D-210)
+//   dos_salidas_un_tick    the second exit order of one tick is dropped (D-207): only the first Link leaves
+//   pausa_fondo_local      in a session the group game over draws the world from the picture captured on each PC,
+//                          and a PC without it (it entered the group meanwhile, a new window size) draws the world
+//                          again to capture it (D-224): the actors' draw runs there only, whoever enters resynchronizes
+//   texto_npc_del_mas_cercano  a character's text (Npc_UpdateTalking) is computed for the Link nearest to it only and
+//                          opened by whoever presses A (D-223): with a Link on foot nearer, Ingo asks the rider to
+//                          mount
+//   impa_linea_del_mas_cercano  Impa's line (the Lullaby's lesson) is checked with the Link nearest to her only
+//                          (D-226): a partner by her just west of the line keeps a Link who walks past it from
+//                          starting it
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#ifdef ZMP_HARNESS
+int Zmp_TestMutant(const char* name);
+// robo_foco: called at the very start of main() and once per frame.
+void Zmp_TestFocusMutantStart(void);
+void Zmp_TestFocusMutantFrame(void);
+#else
+static inline int Zmp_TestMutant(const char* name) {
+    (void)name;
+    return 0;
+}
+static inline void Zmp_TestFocusMutantStart(void) {
+}
+static inline void Zmp_TestFocusMutantFrame(void) {
+}
+#endif
+
+#ifdef __cplusplus
+}
+#endif

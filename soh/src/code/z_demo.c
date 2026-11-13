@@ -1,5 +1,7 @@
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
 #include "global.h"
 #include "z64camera.h"
+#include "soh/Enhancements/savestate_serialize.h" // ZMP
 
 #include <string.h>
 
@@ -111,6 +113,14 @@ u16 D_8015FCCC;      // only written to, never read
 char D_8015FCD0[20]; // unreferenced
 u8 D_8015FCE4;       // only written to, never read
 
+// ZMP: the text box and camera commands of the running cutscene already started and where each got to (simulation state
+// kept outside the heap): a player who joins a group during a cutscene must get the group's values with its state
+// (phase 5).
+#define DEMO_SHIP_SAVESTATE_FIELDS(F) \
+    F(D_8011E1C0)                     \
+    F(D_8011E1C4) F(sTitleCsState) F(D_8015FCC0) F(D_8015FCC2) F(D_8015FCC4) F(D_8015FCC6) F(D_8015FCC8) F(sQuakeIndex)
+SHIP_SAVESTATE_DEFINE(Demo, DEMO_SHIP_SAVESTATE_FIELDS)
+
 void func_80068ECC(PlayState* play, CutsceneContext* csCtx);
 
 void Cutscene_DrawDebugInfo(PlayState* play, Gfx** dlist, CutsceneContext* csCtx) {
@@ -139,6 +149,7 @@ void func_8006450C(PlayState* play, CutsceneContext* csCtx) {
 }
 
 void func_80064520(PlayState* play, CutsceneContext* csCtx) {
+    Zmp_OnCutsceneStart(); // ZMP: the player in context is the one the cutscene is about
     csCtx->state = CS_STATE_SKIPPABLE_INIT;
     csCtx->linkAction = NULL;
 }
@@ -501,6 +512,7 @@ void Cutscene_Command_Terminator(PlayState* play, CutsceneContext* csCtx, CsCmdB
     bool shouldSkipCommand = cmd->base == 8 && !GameInteractor_Should(VB_PLAY_PULL_MASTER_SWORD_CS, true);
     bool debugCsSkip = CHECK_BTN_ALL(play->state.input[0].press.button, BTN_START) &&
                        (gSaveContext.fileNum != 0xFEDC) && CVarGetInteger(CVAR_DEVELOPER_TOOLS("DebugEnabled"), 0);
+    debugCsSkip = debugCsSkip || Zmp_HostSkipsCutscene(play); // ZMP: in multiplayer the host skips with START
 
     if ((gSaveContext.gameMode != GAMEMODE_NORMAL) && (gSaveContext.gameMode != GAMEMODE_END_CREDITS) &&
         (play->sceneNum != SCENE_HYRULE_FIELD) && (csCtx->frames > 20) &&
@@ -2029,7 +2041,10 @@ void Cutscene_ProcessCommands(PlayState* play, CutsceneContext* csCtx, u8* cutsc
                 for (j = 0; j < cmdEntries; j++) {
                     cmd = (CsCmdBase*)cutscenePtr;
                     if (cmd->base != 0xFFFF) {
+                        // ZMP (D-196): a song the cutscene teaches is played back by the player it is about
+                        s32 zmpOcaCtx = Zmp_CutsceneOcarinaBegin(play, ((CsCmdTextbox*)cutscenePtr)->type);
                         Cutscene_Command_Textbox(play, csCtx, (void*)cutscenePtr);
+                        Zmp_CutsceneContextEnd(play, zmpOcaCtx); // ZMP
                     }
                     cutscenePtr += sizeof(CutsceneData) * 3;
                 }
@@ -2138,6 +2153,7 @@ void func_80068ECC(PlayState* play, CutsceneContext* csCtx) {
             csCtx->npcActions[i] = NULL;
         }
 
+        Zmp_OnCutsceneTriggered(); // ZMP (S7-A, D-176): about the player whose actor set the trigger
         csCtx->state++;
 
         if (csCtx->state == CS_STATE_SKIPPABLE_INIT) {
@@ -2213,6 +2229,60 @@ void Cutscene_HandleEntranceTriggers(PlayState* play) {
     }
 }
 
+// ZMP (D-188): the running cutscene ends at once, as func_80068DC0 ends it once the letterbox is gone (for a cutscene
+// whose scene change takes only some Links: the scene is not loaded again, so nothing else would drop it). Answers the
+// sub camera it cleared (0: none).
+s32 Zmp_EndCutsceneNow(PlayState* play) {
+    CutsceneContext* csCtx = &play->csCtx;
+    s32 cleared = 0;
+    s16 i;
+
+    csCtx->unk_0C = 0.0f;
+    csCtx->linkAction = NULL;
+    for (i = 0; i < 10; i++) {
+        csCtx->npcActions[i] = NULL;
+    }
+    gSaveContext.cutsceneIndex = 0;
+    gSaveContext.gameMode = GAMEMODE_NORMAL;
+    play->envCtx.fillScreen = false; // (its fade out, which the scene's load would have ended)
+    play->envCtx.screenFillColor[3] = 0;
+    if (D_8015FCC8 != 0 && csCtx->unk_14 >= CAM_ID_SUB_FIRST && play->cameraPtrs[csCtx->unk_14] != NULL) {
+        Play_ChangeCameraStatus(play, D_8015FCC6, CAM_STAT_ACTIVE);
+        Play_ClearCamera(play, csCtx->unk_14);
+        func_8005B1A4(play->cameraPtrs[D_8015FCC6]);
+        cleared = csCtx->unk_14;
+    }
+    Audio_SetCutsceneFlag(0);
+    csCtx->state = CS_STATE_IDLE;
+    return cleared;
+}
+
+// ZMP (D-188): what Cutscene_HandleEntranceTriggers does on arriving at `entrance`, for Links that arrive at it without
+// loading the scene (a trial's sage in Ganon's Castle takes back only the Links of its room). 1 if a cutscene starts.
+s32 Zmp_StartEntranceCutscene(PlayState* play, s16 entrance) {
+    s16 i;
+
+    for (i = 0; i < ARRAY_COUNT(sEntranceCutsceneTable); i++) {
+        EntranceCutscene* entranceCutscene = &sEntranceCutsceneTable[i];
+        u8 requiredAge = entranceCutscene->ageRestriction;
+
+        if (GameInteractor_Should(VB_ALLOW_ENTRANCE_CS_FOR_EITHER_AGE, requiredAge == 2, entranceCutscene->entrance)) {
+            requiredAge = gSaveContext.linkAge;
+        }
+        if ((entranceCutscene->entrance == entrance) && !Flags_GetEventChkInf(entranceCutscene->flag) &&
+            ((u8)gSaveContext.linkAge == requiredAge)) {
+            Flags_SetEventChkInf(entranceCutscene->flag);
+            if (GameInteractor_Should(VB_PLAY_ENTRANCE_CS, true, entranceCutscene->flag, entranceCutscene->entrance)) {
+                Cutscene_SetSegment(play, entranceCutscene->segAddr);
+                gSaveContext.cutsceneTrigger = 2;
+                return 1;
+            }
+            return 0;
+        }
+    }
+    return 0;
+}
+
 void Cutscene_HandleConditionalTriggers(PlayState* play) {
     osSyncPrintf("\ngame_info.mode=[%d] restart_flag", ((void)0, gSaveContext.respawnFlag));
     LUSLOG_INFO("Cutscene_HandleConditionalTriggers - entranceIndex: %#x cutsceneIndex: %#x",
@@ -2265,6 +2335,7 @@ void Cutscene_HandleConditionalTriggers(PlayState* play) {
 }
 
 void Cutscene_SetSegment(PlayState* play, void* segment) {
+    Zmp_OnCutsceneStart(); // ZMP
     if (SEGMENT_NUMBER(segment) != 0) {
         play->csCtx.segment = SEGMENTED_TO_VIRTUAL(segment);
     } else {

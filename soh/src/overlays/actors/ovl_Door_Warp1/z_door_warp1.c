@@ -1,3 +1,4 @@
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
 #include "z_door_warp1.h"
 #include "objects/object_warp1/object_warp1.h"
 #include "soh/Enhancements/randomizer/randomizer_entrance.h"
@@ -57,8 +58,10 @@ static InitChainEntry sInitChain[] = {
 };
 
 static s16 sWarpTimerTarget;
+static s16 sRutoWarpSubCamId; // ZMP: declared here to travel with the state (B1)
 
-#define DOOR_WARP1_SHIP_SAVESTATE_FIELDS(F) F(sWarpTimerTarget)
+// ZMP (B1): Ruto's warp camera travels too: whoever joins during her text must not take camera 0 for it.
+#define DOOR_WARP1_SHIP_SAVESTATE_FIELDS(F) F(sWarpTimerTarget) F(sRutoWarpSubCamId)
 SHIP_SAVESTATE_DEFINE(DoorWarp1, DOOR_WARP1_SHIP_SAVESTATE_FIELDS)
 
 void DoorWarp1_SetupAction(DoorWarp1* this, DoorWarp1ActionFunc actionFunc) {
@@ -490,6 +493,7 @@ void DoorWarp1_ChildWarpIdle(DoorWarp1* this, PlayState* play) {
 
         Audio_PlaySfxGeneral(NA_SE_EV_LINK_WARP, &player->actor.projectedPos, 4, &gSfxDefaultFreqAndVolScale,
                              &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
+        Zmp_WarpBegin(player); // ZMP: the warp is this player's until it leaves (phase 5b)
         OnePointCutscene_Init(play, 0x25E7, 999, &this->actor, CAM_ID_MAIN);
         Player_SetCsActionWithHaltedActors(play, &this->actor, 10);
 
@@ -559,6 +563,7 @@ void DoorWarp1_ChildWarpOut(DoorWarp1* this, PlayState* play) {
         play->transitionTrigger = TRANS_TRIGGER_START;
         play->transitionType = TRANS_TYPE_FADE_WHITE_SLOW;
         gSaveContext.nextTransitionType = TRANS_TYPE_FADE_WHITE;
+        Zmp_WarpTransition(player); // ZMP: only the player in the warp leaves (phase 5b)
     }
 
     Math_StepToF(&this->unk_194, 2.0f, 0.01f);
@@ -577,13 +582,12 @@ void DoorWarp1_RutoWarpIdle(DoorWarp1* this, PlayState* play) {
 
     if (this->rutoWarpState != WARP_BLUE_RUTO_STATE_INITIAL && DoorWarp1_PlayerInRange(this, play)) {
         this->rutoWarpState = WARP_BLUE_RUTO_STATE_ENTERED;
+        Zmp_WarpBegin(GET_PLAYER(play)); // ZMP (B1): the warp, and Ruto, are this player's until it leaves
         Player_SetCsActionWithHaltedActors(play, &this->actor, 10);
         this->unk_1B2 = 1;
         DoorWarp1_SetupAction(this, func_80999EE0);
     }
 }
-
-static s16 sRutoWarpSubCamId;
 
 void func_80999EE0(DoorWarp1* this, PlayState* play) {
     Vec3f at;
@@ -593,6 +597,14 @@ void func_80999EE0(DoorWarp1* this, PlayState* play) {
     if (this->rutoWarpState == WARP_BLUE_RUTO_STATE_3) {
         Play_ChangeCameraStatus(play, CAM_ID_MAIN, CAM_STAT_WAIT);
         sRutoWarpSubCamId = Play_CreateSubCamera(play);
+        if (sRutoWarpSubCamId == SUBCAM_NONE) { // ZMP (B1): no free camera (never in the original): text only
+            Play_ChangeCameraStatus(play, CAM_ID_MAIN, CAM_STAT_ACTIVE);
+            sRutoWarpSubCamId = 0;
+            this->rutoWarpState = WARP_BLUE_RUTO_STATE_TALKING;
+            Message_StartTextbox(play, 0x4022, NULL);
+            DoorWarp1_SetupAction(this, func_80999FE4);
+            return;
+        }
 
         Play_ChangeCameraStatus(play, sRutoWarpSubCamId, CAM_STAT_ACTIVE);
         at.x = this->actor.world.pos.x;
@@ -616,8 +628,10 @@ void func_80999FE4(DoorWarp1* this, PlayState* play) {
         Audio_PlaySfxGeneral(NA_SE_EV_LINK_WARP, &this->actor.projectedPos, 4, &gSfxDefaultFreqAndVolScale,
                              &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
         OnePointCutscene_Init(play, 0x25E9, 999, &this->actor, CAM_ID_MAIN);
-        Play_CopyCamera(play, -1, sRutoWarpSubCamId);
-        Play_ChangeCameraStatus(play, sRutoWarpSubCamId, CAM_STAT_WAIT);
+        if (sRutoWarpSubCamId != 0) { // ZMP (B1): (see func_80999EE0)
+            Play_CopyCamera(play, -1, sRutoWarpSubCamId);
+            Play_ChangeCameraStatus(play, sRutoWarpSubCamId, CAM_STAT_WAIT);
+        }
         this->rutoWarpState = WARP_BLUE_RUTO_STATE_WARPING;
         DoorWarp1_SetupAction(this, DoorWarp1_RutoWarpOut);
     }
@@ -650,6 +664,7 @@ void DoorWarp1_RutoWarpOut(DoorWarp1* this, PlayState* play) {
 
         play->transitionTrigger = TRANS_TRIGGER_START;
         play->transitionType = TRANS_TYPE_FADE_WHITE_SLOW;
+        Zmp_WarpTransition(player); // ZMP (B1): only the player in the warp leaves, like any blue warp (D-067)
     }
 
     Math_StepToF(&this->unk_194, 2.0f, 0.01f);
@@ -689,6 +704,7 @@ void DoorWarp1_AdultWarpIdle(DoorWarp1* this, PlayState* play) {
     if (GameInteractor_Should(VB_BLUE_WARP_CONSIDER_ADULT_IN_RANGE, DoorWarp1_PlayerInRange(this, play), this)) {
         player = GET_PLAYER(play);
 
+        Zmp_WarpBegin(player); // ZMP: the warp is this player's until it leaves (phase 5b)
         OnePointCutscene_Init(play, 0x25E8, 999, &this->actor, CAM_ID_MAIN);
         Player_SetCsActionWithHaltedActors(play, &this->actor, 10);
         player->unk_450.x = this->actor.world.pos.x;
@@ -841,8 +857,9 @@ void DoorWarp1_AdultWarpOut(DoorWarp1* this, PlayState* play) {
         play->transitionTrigger = TRANS_TRIGGER_START;
         play->transitionType = TRANS_TYPE_FADE_WHITE;
         gSaveContext.nextTransitionType = TRANS_TYPE_FADE_WHITE_SLOW;
+        Zmp_WarpTransition(player); // ZMP: only the player in the warp leaves (phase 5b)
     }
-    if (this->warpTimer >= 141) {
+    if (this->warpTimer >= 141 && !Zmp_WarpIsShared()) { // ZMP: no white-out of the world while others stay
         f32 screenFillAlpha;
 
         play->envCtx.fillScreen = true;
@@ -876,7 +893,7 @@ void DoorWarp1_AdultWarpOut(DoorWarp1* this, PlayState* play) {
     Math_SmoothStepToF(&this->crystalAlpha, 255.0f, 0.1f, 1.0f, 0.01f);
 
     temp_f0_2 = 1.0f - (f32)(sWarpTimerTarget - this->warpTimer) / (sWarpTimerTarget - (sWarpTimerTarget - 100));
-    if (temp_f0_2 > 0.0f) {
+    if (temp_f0_2 > 0.0f && !Zmp_WarpIsShared()) { // ZMP: the scene does not go dark while others stay
         s16 i;
 
         for (i = 0; i < 3; i++) {
@@ -888,6 +905,55 @@ void DoorWarp1_AdultWarpOut(DoorWarp1* this, PlayState* play) {
         if (play->envCtx.adjFogNear < -300) {
             play->roomCtx.curRoom.segment = NULL;
         }
+    }
+}
+
+// ZMP (phase 5b): the player that was in the warp left the scene alone; the warp appears again for the next one.
+// B1: Ruto's warp too, and Ruto waits by it again (the player who was in it left with her, or left the game).
+void EnRu1_ZmpBackByWarp(Actor* thisx, PlayState* play);
+void DoorWarp1_ZmpRelease(Actor* thisx, PlayState* play) {
+    DoorWarp1* this = (DoorWarp1*)thisx;
+    s32 adult = this->actionFunc == DoorWarp1_AdultWarpOut || this->actionFunc == func_8099A508;
+    s32 ruto = this->actor.params == WARP_BLUE_RUTO && this->rutoWarpState >= WARP_BLUE_RUTO_STATE_ENTERED;
+
+    if (!adult && !ruto && this->actionFunc != DoorWarp1_ChildWarpOut) {
+        return;
+    }
+    if (ruto) {
+        // Its own camera (made in func_80999EE0, never cleared in the original: the scene ended) would take one of the
+        // three sub cameras each time.
+        if (sRutoWarpSubCamId != 0 && play->cameraPtrs[sRutoWarpSubCamId] != NULL) {
+            Play_ClearCamera(play, sRutoWarpSubCamId);
+        }
+        sRutoWarpSubCamId = 0;
+        this->rutoWarpState = WARP_BLUE_RUTO_STATE_READY;
+        if (this->actor.parent != NULL && this->actor.parent->id == ACTOR_EN_RU1) {
+            EnRu1_ZmpBackByWarp(this->actor.parent, play);
+        }
+    }
+    this->scale = 0;
+    this->unk_1AE = -140;
+    this->unk_1B0 = -80;
+    this->unk_1BC = 1.0f;
+    this->unk_194 = 0.3f;
+    this->unk_198 = 0.3f;
+    this->unk_19C = 0.0f;
+    this->unk_1B2 = 0;
+    this->unk_1B8 = 0;
+    this->warpTimer = 0;
+    this->lightRayAlpha = 0.0f;
+    this->warpAlpha = 0.0f;
+    this->crystalAlpha = 0.0f;
+    this->actor.shape.yOffset = adult ? -400.0f : 1.0f;
+    Lights_PointNoGlowSetInfo(&this->upperLightInfo, this->actor.world.pos.x, this->actor.world.pos.y,
+                              this->actor.world.pos.z, 200, 255, 255, 255);
+    Lights_PointNoGlowSetInfo(&this->lowerLightInfo, this->actor.world.pos.x, this->actor.world.pos.y,
+                              this->actor.world.pos.z, 200, 255, 255, 255);
+    if (adult) {
+        Animation_ChangeImpl(&this->skelAnime, &gWarpCrystalAnim, 1.0f, 1.0f, 1.0f, ANIMMODE_ONCE, 40.0f, 1);
+        DoorWarp1_SetupAction(this, func_8099A3A4);
+    } else {
+        DoorWarp1_SetupAction(this, DoorWarp1_WarpAppear);
     }
 }
 

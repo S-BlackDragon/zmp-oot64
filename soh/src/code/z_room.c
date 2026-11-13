@@ -3,6 +3,7 @@
 #endif
 
 #include "global.h"
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
 #include "vt.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include <string.h>
@@ -505,6 +506,7 @@ void func_80096B6C(PlayState* play, Room* room, u32 flags) {
 void func_80096F6C(PlayState* play, Room* room, u32 flags) {
     PolygonType1* polygon1 = &room->meshHeader->polygon1;
 
+    Zmp_RoomImageBegin(play, room); // ZMP: the picture of each player's own fixed camera
     if (polygon1->format == 1) {
         func_80096680(play, room, flags);
     } else if (polygon1->format == 2) {
@@ -512,6 +514,7 @@ void func_80096F6C(PlayState* play, Room* room, u32 flags) {
     } else {
         LOG_HUNGUP_THREAD();
     }
+    Zmp_RoomImageEnd(play); // ZMP
 }
 
 void func_80096FD4(PlayState* play, Room* room) {
@@ -640,6 +643,9 @@ void Room_Draw(PlayState* play, Room* room, u32 flags) {
 }
 
 void Room_FinishRoomChange(PlayState* play, RoomContext* roomCtx) {
+    if (Zmp_RoomFinish(play, roomCtx)) { // ZMP: multiplayer unloads only the rooms nobody stands in
+        return;
+    }
     roomCtx->prevRoom.num = -1;
     roomCtx->prevRoom.segment = NULL;
     func_80031B14(play, &play->actorCtx); // kills all actors without room num set to -1

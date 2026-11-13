@@ -7,12 +7,16 @@ set(CMAKE_C_STANDARD 23 CACHE STRING "The C standard to use")
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum OS X deployment version")
 
 project(Ship VERSION 9.2.3 LANGUAGES C CXX)
+include(CMake/EmscriptenConfig.cmake) # ZMP web (D-238): no-op outside Emscripten
 include(CMake/soh-cvars.cmake)
 include(CMake/lus-cvars.cmake)
 set(SPDLOG_LEVEL_TRACE 0)
 set(SPDLOG_LEVEL_OFF 6)
 set(SPDLOG_MIN_CUTOFF SPDLOG_LEVEL_TRACE CACHE STRING "cutoff at trace")
 option(USE_ASAN "Use Address Sanitizer" OFF)
+# ZMP: test harness (localhost control server, PLAN.md 5.2). ON for development and test
+# builds; the distribution build is configured with -DZMP_HARNESS=OFF.
+option(ZMP_HARNESS "Build the ZMP test harness" ON)
 
 option(SUPPRESS_WARNINGS "Suppress warnings in LUS and src (decomp)" ON)
 if(SUPPRESS_WARNINGS)
@@ -76,6 +80,17 @@ endif()
 
 set(CMAKE_PROJECT_GIT_COMMIT_TAG "${GIT_COMMIT_TAG}" CACHE STRING "Git commit tag" FORCE)
 
+# ZMP: the build date shown in the menu is the commit date instead of __DATE__/__TIME__, so two
+# builds of the same commit are byte-identical (reproducible build, the handshake compares the
+# executable hash).
+execute_process(
+    COMMAND git log -1 --format=%cd --date=format:%Y-%m-%d_%H:%M:%S
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE ZMP_BUILD_DATE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+string(REPLACE "_" " " ZMP_BUILD_DATE "${ZMP_BUILD_DATE}")
+
 set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT soh)
 add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/MP>)
 add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
@@ -103,7 +118,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     endif()
 
     vcpkg_bootstrap()
-    vcpkg_install_packages(zlib bzip2 libzip libpng sdl2 sdl2-net glew glfw3 nlohmann-json tinyxml2 spdlog libogg libvorbis opus opusfile)
+    # ZMP: zstd compresses the portable save states (PLAN.md 8.3)
+    vcpkg_install_packages(zlib bzip2 libzip libpng sdl2 sdl2-net glew glfw3 nlohmann-json tinyxml2 spdlog libogg libvorbis opus opusfile zstd)
     if (CMAKE_C_COMPILER_LAUNCHER MATCHES "ccache|sccache")
         set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
     endif()
@@ -146,6 +162,15 @@ add_compile_options($<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fno-fast-math>)
 add_compile_options($<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-ffp-contract=off>)
 add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/fp:precise>)
 add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/fp:except->)
+# ZMP: /fp:precise is the MSVC equivalent of -ffp-contract=off: since VS 2022 it never
+# contracts a*b+c into an FMA unless /fp:contract is given. Refuse any flag that would
+# reintroduce contraction or fast math (lockstep determinism, PLAN.md 2.4).
+foreach(_zmp_flagvar CMAKE_C_FLAGS CMAKE_CXX_FLAGS CMAKE_C_FLAGS_RELEASE CMAKE_CXX_FLAGS_RELEASE
+        CMAKE_C_FLAGS_DEBUG CMAKE_CXX_FLAGS_DEBUG)
+    if("${${_zmp_flagvar}}" MATCHES "/fp:fast|/fp:contract|-ffast-math|-ffp-contract=fast")
+        message(FATAL_ERROR "ZMP: ${_zmp_flagvar} contains a non-deterministic floating point flag")
+    endif()
+endforeach()
 
 if(NOT CMAKE_BUILD_TYPE )
     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build." FORCE)
@@ -195,7 +220,9 @@ add_compile_definitions(CONTROLLERBUTTONS_T=uint32_t)
 ################################################################################
 # Torch (ROM asset extraction)
 ################################################################################
-find_package(ZLIB REQUIRED)
+if(NOT EMSCRIPTEN)
+    find_package(ZLIB REQUIRED)
+endif()
 
 include(FetchContent)
 
@@ -303,6 +330,55 @@ target_link_libraries(soh-o2r-packer PRIVATE torch)
 if(MSVC)
     set_target_properties(soh-torch soh-o2r-packer PROPERTIES
         MSVC_RUNTIME_LIBRARY "$<IF:$<CONFIG:Debug>,MultiThreadedDebug,MultiThreaded>")
+endif()
+
+if(EMSCRIPTEN)
+    # The web build extracts the player's ROM in the browser. The extractor is a separate small module (torch only)
+    # run in a Web Worker by soh/web/extractor-worker.js, next to the game in soh/.
+    set(SHIPWEB_OUTPUT_DIR ${CMAKE_BINARY_DIR}/soh)
+    add_executable(soh-extractor
+        ${CMAKE_CURRENT_SOURCE_DIR}/soh/web/extractor/ExtractorMain.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/soh/soh/Extractor/TorchExtract.cpp
+    )
+    target_include_directories(soh-extractor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/soh/soh/Extractor)
+    target_compile_definitions(soh-extractor PRIVATE SHIPWEB_PORT_VERSION="${CMAKE_PROJECT_VERSION}")
+    target_link_libraries(soh-extractor PRIVATE torch)
+    target_link_options(soh-extractor PRIVATE
+        "--no-entry"
+        "SHELL:-s ENVIRONMENT=worker"
+        "SHELL:-s EXPORTED_RUNTIME_METHODS=FS,ccall"
+        "SHELL:-s FORCE_FILESYSTEM=1"
+    )
+    set_target_properties(soh-extractor PROPERTIES SUFFIX ".js" RUNTIME_OUTPUT_DIRECTORY ${SHIPWEB_OUTPUT_DIR})
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/soh/web/extractor-worker.js ${SHIPWEB_OUTPUT_DIR}/extractor-worker.js
+        COPYONLY)
+
+    # The asset metadata torch needs, packaged per ROM version (yml/<version>.data/.js, ~7MB each) so the page only
+    # downloads the one matching the player's ROM.
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(SHIPWEB_YML_DIR ${CMAKE_CURRENT_SOURCE_DIR}/soh/assets/yml)
+    file(GLOB SHIPWEB_YML_ENTRIES RELATIVE ${SHIPWEB_YML_DIR} ${SHIPWEB_YML_DIR}/*)
+    set(SHIPWEB_YML_PACKAGES)
+    file(MAKE_DIRECTORY ${SHIPWEB_OUTPUT_DIR}/yml)
+    foreach(version IN LISTS SHIPWEB_YML_ENTRIES)
+        if(NOT IS_DIRECTORY ${SHIPWEB_YML_DIR}/${version})
+            continue()
+        endif()
+        file(GLOB_RECURSE version_files ${SHIPWEB_YML_DIR}/${version}/*)
+        add_custom_command(
+            OUTPUT ${SHIPWEB_OUTPUT_DIR}/yml/${version}.data ${SHIPWEB_OUTPUT_DIR}/yml/${version}.js
+            COMMAND ${Python3_EXECUTABLE} ${EMSCRIPTEN_ROOT_PATH}/tools/file_packager.py ${version}.data
+                    --preload ${SHIPWEB_YML_DIR}/config.yml@/yml/config.yml ${SHIPWEB_YML_DIR}/${version}@/yml/${version}
+                    --js-output=${version}.js --export-name=Module
+            WORKING_DIRECTORY ${SHIPWEB_OUTPUT_DIR}/yml
+            DEPENDS ${SHIPWEB_YML_DIR}/config.yml ${version_files}
+            COMMENT "Packaging asset metadata for ${version}"
+            VERBATIM
+        )
+        list(APPEND SHIPWEB_YML_PACKAGES ${SHIPWEB_OUTPUT_DIR}/yml/${version}.data)
+    endforeach()
+    add_custom_target(soh-extractor-yml DEPENDS ${SHIPWEB_YML_PACKAGES})
+    add_dependencies(soh-extractor soh-extractor-yml)
 endif()
 
 # Target to generate OTRs. SOH_ROM_PATH takes roms and/or directories of roms; torch names each

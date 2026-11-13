@@ -10,6 +10,7 @@
 #include "objects/object_hni/object_hni.h"
 #include "scenes/overworld/spot09/spot09_scene.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP (D-220)
 #include <assert.h>
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -751,7 +752,7 @@ void EnHorse_Init(Actor* thisx, PlayState* play2) {
     EnHorse* this = (EnHorse*)thisx;
     PlayState* play = play2;
 
-    AREG(6) = 0;
+    AREG(6) = 0; // (ZMP, D-233: each player's own flag is cleared by Horse_SetupInGameplay, in its context)
     Actor_ProcessInitChain(&this->actor, sInitChain);
     EnHorse_ClearDustFlags(&this->dustFlags);
     DREG(53) = 0;
@@ -898,6 +899,8 @@ void EnHorse_Init(Actor* thisx, PlayState* play2) {
         }
     }
     this->actor.home.rot.z = this->actor.world.rot.z = this->actor.shape.rot.z = 0;
+    // (ZMP, D-233: whose horse this is, zmpOwner, is set at the spawn, z_horse.c ZmpHorseSpawn: this init runs once the
+    // object is loaded, in whatever context an untagged horse gets)
 }
 
 void EnHorse_Destroy(Actor* thisx, PlayState* play) {
@@ -1746,13 +1749,12 @@ void EnHorse_SetFollowAnimation(EnHorse* this, PlayState* play);
 void EnHorse_Inactive(EnHorse* this, PlayState* play2) {
     PlayState* play = play2;
 
-    if (DREG(53) != 0 && this->type == HORSE_EPONA) {
-        DREG(53) = 0;
+    if (this->type == HORSE_EPONA && Zmp_EponaCallFor(&this->actor)) { // ZMP (D-233): its owner's song
         if (EnHorse_Spawn(this, play) != 0) {
             Audio_PlaySfxGeneral(NA_SE_EV_HORSE_NEIGH, &this->actor.projectedPos, 4, &gSfxDefaultFreqAndVolScale,
                                  &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
             this->stateFlags &= ~ENHORSE_INACTIVE;
-            gSaveContext.horseData.scene = play->sceneNum;
+            ZMP_HORSE_DATA.scene = play->sceneNum;
 
             // Focus the camera on Epona
             Camera_SetParam(play->cameraPtrs[0], 8, this);
@@ -1821,8 +1823,7 @@ void EnHorse_Idle(EnHorse* this, PlayState* play) {
     this->actor.speedXZ = 0.0f;
     EnHorse_IdleAnimSounds(this, play);
 
-    if (DREG(53) && this->type == HORSE_EPONA) {
-        DREG(53) = 0;
+    if (this->type == HORSE_EPONA && Zmp_EponaCallFor(&this->actor)) { // ZMP (D-233): its owner's song
         if (!func_80A5BBBC(play, this, &this->actor.world.pos)) {
             if (EnHorse_Spawn(this, play)) {
                 Audio_PlaySfxGeneral(NA_SE_EV_HORSE_NEIGH, &this->actor.projectedPos, 4, &gSfxDefaultFreqAndVolScale,
@@ -3329,7 +3330,8 @@ void EnHorse_CheckBoost(EnHorse* thisx, PlayState* play2) {
 
     if (this->action == ENHORSE_ACT_MOUNTED_WALK || this->action == ENHORSE_ACT_MOUNTED_TROT ||
         this->action == ENHORSE_ACT_MOUNTED_GALLOP) {
-        if (CHECK_BTN_ALL(play->state.input[0].press.button, BTN_A) && (play->interfaceCtx.unk_1EE == 8)) {
+        // ZMP (D-220): the label its rider is shown, kept by the simulation (the HUD's is the local screen's)
+        if (CHECK_BTN_ALL(play->state.input[0].press.button, BTN_A) && (Zmp_ShownDoAction(play) == 8)) {
             if (!(this->stateFlags & ENHORSE_BOOST) && !(this->stateFlags & ENHORSE_FLAG_8) &&
                 !(this->stateFlags & ENHORSE_FLAG_9)) {
                 if (this->numBoosts > 0) {

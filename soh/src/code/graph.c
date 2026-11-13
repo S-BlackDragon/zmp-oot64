@@ -1,4 +1,5 @@
 #include "global.h"
+#include "soh/Zmp/Sim/ZmpSim.h" // ZMP: logic tick hooks
 #include "vt.h"
 #include "regs.h"
 
@@ -10,6 +11,9 @@
 #include <libultraship/bridge/windowbridge.h>
 #include "soh/Enhancements/gameconsole.h"
 #include "soh/OTRGlobals.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #define GFXPOOL_HEAD_MAGIC 0x1234
 #define GFXPOOL_TAIL_MAGIC 0x5678
@@ -434,9 +438,56 @@ extern AudioMgr gAudioMgr;
 
 extern void ProcessSaveStateRequests(void);
 
-static void RunFrame() {
+#ifdef __EMSCRIPTEN__
+static int sWebTickRan = 0; // ZMP web: whether the last RunFrameOnce ran a tick (0: it only drew)
+#endif
+
+static void RunFrameOnce() {
     u32 size;
     char faultMsg[0x50];
+
+#ifdef __EMSCRIPTEN__
+    // requestAnimationFrame fires at the display refresh rate (usually 60Hz) and there is no thread to sleep on, so
+    // pace the game logic here: run one game tick every (R_UPDATE_RATE / 60) seconds (20Hz by default).
+    sWebTickRan = 0;
+    if (runFrameContext.state == 1) {
+        static double sNextTickMs = 0.0;
+        double nowMs = emscripten_get_now();
+        double intervalMs = 1000.0 * (R_UPDATE_RATE > 0 ? R_UPDATE_RATE : 3) / 60.0;
+        // ZMP web: a client catching up with its group (D-070, D-191) or an accelerated test runs its ticks that many
+        // times faster, as the desktop does by drawing fewer frames per tick.
+        int speed = Zmp_PresentationSpeed();
+        if (speed > 1) {
+            intervalMs /= (double)speed;
+        }
+        if (sNextTickMs == 0.0) {
+            sNextTickMs = nowMs;
+        }
+        // ZMP: diagnostics of the pacing (the browser console): a change of rate and a long stretch without ticks.
+        static int sLastRate = -1;
+        static int sFramesWithoutTick = 0;
+        if (R_UPDATE_RATE != sLastRate) {
+            printf("zmp web: R_UPDATE_RATE %d -> %d\n", sLastRate, R_UPDATE_RATE);
+            sLastRate = R_UPDATE_RATE;
+        }
+        if (nowMs + 1.0 < sNextTickMs) {
+            // No tick due yet: show the next interpolated frame of the last one instead.
+            if (++sFramesWithoutTick == 180) {
+                printf("zmp web: 180 frames without a tick: now=%.0f next=%.0f interval=%.1f rate=%d\n", nowMs,
+                       sNextTickMs, intervalMs, R_UPDATE_RATE);
+            }
+            Graph_RunPendingInterpolatedFrame();
+            return;
+        }
+        sFramesWithoutTick = 0;
+        sNextTickMs += intervalMs;
+        // If we fell far behind (slow frame, background tab...), don't try to catch up with a burst of ticks.
+        if (nowMs - sNextTickMs > intervalMs * 2.0) {
+            sNextTickMs = nowMs + intervalMs;
+        }
+        sWebTickRan = 1;
+    }
+#endif
 
     switch (runFrameContext.state) {
         case 0:
@@ -466,6 +517,9 @@ static void RunFrame() {
             Fault_AddHungupAndCrashImpl("GAME CLASS MALLOC FAILED", faultMsg);
         }
         GameState_Init(gGameState, runFrameContext.ovl->init, &runFrameContext.gfxCtx);
+#ifdef __EMSCRIPTEN__
+        printf("zmp web: game state initialized, R_UPDATE_RATE=%d\n", R_UPDATE_RATE); // ZMP
+#endif
 
         uint64_t freq = GetFrequency();
 
@@ -473,18 +527,27 @@ static void RunFrame() {
             // uint64_t ticksA, ticksB;
             // ticksA = GetPerfCounter();
 
+            Zmp_OnFrameBegin(); // ZMP: harness commands and session control, between ticks
             Graph_StartFrame();
 
-            PadMgr_ThreadEntry(&gPadMgr);
+            // ZMP: one iteration of this loop is one logic tick (pad read + GameState_Update) followed by
+            // rendering (Graph_ProcessGfxCommands, several interpolated frames per tick). When the tick gate
+            // is closed (lockstep waiting for a bundle, harness pause) only the last frame is drawn again.
+            if (Zmp_ShouldRunTick()) {
+                PadMgr_ThreadEntry(&gPadMgr);
 
-            Graph_Update(&runFrameContext.gfxCtx, gGameState);
+                Graph_Update(&runFrameContext.gfxCtx, gGameState);
+                Zmp_OnTickEnd(); // ZMP: state hash, recording, replay check
+            }
             // ticksB = GetPerfCounter();
 
             if (GfxDebuggerIsDebuggingRequested()) {
                 GfxDebuggerDebugDisplayList(runFrameContext.gfxCtx.workBuffer);
             }
 
+            Zmp_BeforeRender(); // ZMP: rendering must not leave traces in the matrix stack
             Graph_ProcessGfxCommands(runFrameContext.gfxCtx.workBuffer);
+            Zmp_AfterRender(); // ZMP
 
             // uint64_t diff = (ticksB - ticksA) / (freq / 1000);
             // printf("Frame simulated in %ims\n", diff);
@@ -495,6 +558,9 @@ static void RunFrame() {
         }
 
         runFrameContext.nextOvl = Graph_GetNextGameState(gGameState);
+#ifdef __EMSCRIPTEN__
+        printf("zmp web: game state ends, next %s\n", runFrameContext.nextOvl ? "state" : "none (exit)"); // ZMP
+#endif
         GameState_Destroy(gGameState);
         SYSTEM_ARENA_FREE_DEBUG(gGameState);
         Overlay_FreeGameState(runFrameContext.ovl);
@@ -506,10 +572,36 @@ static void RunFrame() {
     exit(0);
 }
 
+static void RunFrame() {
+#ifdef __EMSCRIPTEN__
+    // ZMP web: one animation frame runs up to `speed` ticks when the client is catching up (the pacing inside
+    // RunFrameOnce spaces them; it stops at the first call that only drew).
+    int n = runFrameContext.state == 1 ? Zmp_PresentationSpeed() : 1;
+    if (n < 1) {
+        n = 1;
+    }
+    if (n > 8) {
+        n = 8;
+    }
+    for (int i = 0; i < n; i++) {
+        RunFrameOnce();
+        if (!sWebTickRan) {
+            break;
+        }
+    }
+#else
+    RunFrameOnce();
+#endif
+}
+
 void Graph_ThreadEntry(void* arg0) {
+#ifdef __EMSCRIPTEN__
+    emscripten_set_main_loop(RunFrame, 0, 0);
+#else
     while (WindowIsRunning()) {
         RunFrame();
     }
+#endif
 }
 
 void* Graph_Alloc(GraphicsContext* gfxCtx, size_t size) {

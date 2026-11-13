@@ -1,4 +1,8 @@
 #include "global.h"
+#include "soh/Zmp/Sim/ZmpSim.h"                   // ZMP
+#include "soh/Zmp/Sim/ZmpPlayers.h"               // ZMP
+#include "soh/Enhancements/savestate_serialize.h" // ZMP (D-116)
+#include "soh/Zmp/Test/Mutants.h"                 // ZMP
 #include "vt.h"
 
 #include "overlays/actors/ovl_Arms_Hook/z_arms_hook.h"
@@ -86,6 +90,11 @@
 
 static CollisionPoly* sCurCeilingPoly;
 static s32 sCurCeilingBgId;
+// ZMP (family 1, D-116): the entity of the last ceiling an actor met. An actor that touched a ceiling earlier and is
+// back on its floor compares its floor's entity with it (func_8002E2AC): who entered had its own value. (The poly is
+// only an output nobody reads: it does not travel, it would be an address.)
+#define ACTOR_CEILING_ZMP_NEW_FIELDS(F) F(sCurCeilingBgId)
+ZMP_SAVESTATE_DEFINE(ActorCeiling, ZMP_SAVESTATE_NONE, ACTOR_CEILING_ZMP_NEW_FIELDS, ZMP_SAVESTATE_NONE)
 
 // Used for animating the ice trap on the "Get Item" model.
 f32 iceTrapScale;
@@ -845,6 +854,7 @@ void TitleCard_Init(PlayState* play, TitleCardContext* titleCtx) {
 void TitleCard_InitBossName(PlayState* play, TitleCardContext* titleCtx, void* texture, s16 x, s16 y, u8 width,
                             u8 height, s16 hasTranslation) {
     static char newName[512];
+    Zmp_OnTitleCard(); // ZMP: a card started by a player who arrives is drawn only on its screen
 
     if (gSaveContext.language != LANGUAGE_ENG) {
         size_t length = strlen(texture);
@@ -879,6 +889,7 @@ void TitleCard_InitBossName(PlayState* play, TitleCardContext* titleCtx, void* t
 void TitleCard_InitPlaceName(PlayState* play, TitleCardContext* titleCtx, void* texture, s32 x, s32 y, s32 width,
                              s32 height, s32 delay) {
     SceneTableEntry* loadedScene = play->loadedScene;
+    Zmp_OnTitleCard(); // ZMP: a card started by a player who arrives is drawn only on its screen
     //  size_t size = loadedScene->titleFile.vromEnd - loadedScene->titleFile.vromStart;
     switch (play->sceneNum) {
         case SCENE_DEKU_TREE:
@@ -1132,7 +1143,7 @@ void TitleCard_Draw(PlayState* play, TitleCardContext* titleCtx) {
     s32 doubleWidth;
     s32 titleY;
 
-    if (titleCtx->alpha != 0) {
+    if (titleCtx->alpha != 0 && !Zmp_TitleCardHidden()) { // ZMP: only on the screen of the player who arrived
         width = titleCtx->width;
         height = titleCtx->height;
         s16 TitleCard_PosX_Modifier = titleCtx->isBossCard ? CVarGetInteger(CVAR_COSMETIC("HUD.TitleCard.Boss.PosX"), 0)
@@ -1958,10 +1969,109 @@ u32 Actor_ProcessTalkRequest(Actor* actor, PlayState* play) {
     return false;
 }
 
+// ZMP (D-206): "is the actor on screen?" before offering to talk is asked per player, with the picture of the player
+// who would talk (its own camera), not the canonical one (the anchor's): with the anchor far away the others could not
+// talk to what it does not see. Actor_GetTalkScreenPos leaves the test pending for this actor; the offer below makes it
+// for each player in reach. Transient within one actor's update (cleared after it), never simulation state.
+static Actor* sZmpTalkScreenActor = NULL;
+static s16 sZmpTalkScreenBox[4];
+
+static s32 Zmp_TalkOnScreenOf(PlayState* play, Actor* actor, s32 slot) {
+    Vec3f projectedPos;
+    f32 w;
+    s16 x;
+    s16 y;
+
+    MtxF vp;
+
+    Zmp_SlotViewProjection(play, slot, &vp);
+    SkinMatrix_Vec3fMtxFMultXYZW(&vp, &actor->focus.pos, &projectedPos, &w);
+    w = (w < 1.0f) ? 1.0f : (1.0f / w);
+    x = projectedPos.x * w * (SCREEN_WIDTH / 2) + (SCREEN_WIDTH / 2);
+    y = projectedPos.y * w * -(SCREEN_HEIGHT / 2) + (SCREEN_HEIGHT / 2);
+    return (x >= sZmpTalkScreenBox[0]) && (x <= sZmpTalkScreenBox[1]) && (y >= sZmpTalkScreenBox[2]) &&
+           (y <= sZmpTalkScreenBox[3]);
+}
+
+void Actor_GetTalkScreenPos(PlayState* play, Actor* actor, s16* x, s16* y, s16 minX, s16 maxX, s16 minY, s16 maxY) {
+    if (Zmp_MultiActive() && !Zmp_TestMutant("hablar_con_camara_del_ancla")) {
+        sZmpTalkScreenActor = actor;
+        sZmpTalkScreenBox[0] = minX;
+        sZmpTalkScreenBox[1] = maxX;
+        sZmpTalkScreenBox[2] = minY;
+        sZmpTalkScreenBox[3] = maxY;
+        *x = minX; // (inside the box: the caller goes on to the offer, which tests each player's screen)
+        *y = minY;
+        return;
+    }
+    Actor_GetScreenPos(play, actor, x, y);
+}
+
+// ZMP (D-217): King Zora (En_Kz, z_en_kz.c) offers the talk only to a Link in a narrow cone in front of his home and
+// 265 or more away. Each Link is measured by its own position, not by the nearest Link's for everybody (who, standing
+// nearer or off the cone, kept every other Link from being offered the talk).
+s32 Actor_ZmpKzInCone(Actor* actor, Player* p) {
+    f32 yaw = Math_Vec3f_Yaw(&actor->home.pos, &p->actor.world.pos);
+
+    yaw -= actor->shape.rot.y;
+    return (fabsf(yaw) <= 1638.0f) && (Actor_WorldDistXZToActor(actor, &p->actor) >= 265.0f);
+}
+
+static void Zmp_TalkScreenDone(void) {
+    sZmpTalkScreenActor = NULL;
+}
+
 s32 Actor_OfferTalkExchange(Actor* actor, PlayState* play, f32 arg2, f32 arg3, u32 exchangeItemId) {
     Player* player = GET_PLAYER(play);
 
     // This is convoluted but it seems like it must be a single if statement to match
+    if (Zmp_MultiActive()) {
+        // ZMP (phase 5b): the offer is made to every player in reach, each by its own distance, not only to the
+        // one the actor runs for (the nearest): a player standing next to somebody does not keep the others from
+        // talking to it. Whoever presses A talks; the actor then runs for that player (text box per player).
+        s32 offered = false;
+        s32 k = -1;
+
+        while ((k = Zmp_NextPresentSlot(k)) >= 0) {
+            Player* p = gZmpSim.slots[k].player;
+            f32 xz;
+            f32 y;
+
+            if (p == NULL || gZmpSim.slots[k].downed) {
+                continue;
+            }
+            xz = (p == player) ? actor->xzDistToPlayer : Actor_WorldDistXZToActor(actor, &p->actor);
+            y = (p == player) ? actor->yDistToPlayer : Actor_HeightDiff(actor, &p->actor);
+            if ((actor->id == ACTOR_EN_KZ) && !Zmp_TestMutant("rey_zora_del_mas_cercano")) { // ZMP (D-217)
+                if (!Actor_ZmpKzInCone(actor, p)) {
+                    continue;
+                }
+                xz = Math_Vec3f_DistXZ(&actor->home.pos, &p->actor.world.pos); // (as z_en_kz.c measures it)
+            }
+            if ((p->actor.flags & ACTOR_FLAG_TALK) ||
+                ((exchangeItemId != EXCH_ITEM_NONE) && (Player_InBlockingCsMode(play, p) || p->unk_6AD == 4)) ||
+                (p->focusActor != actor && ((arg3 < fabsf(y)) || (p->talkActorDistance < xz) || (arg2 < xz)))) {
+                continue;
+            }
+            if ((sZmpTalkScreenActor == actor) && !Zmp_TalkOnScreenOf(play, actor, k)) { // ZMP (D-206)
+                continue;
+            }
+            // ZMP (D-223): a talk that is accepted by itself (no A: Ingo after the race, a cow after Epona's Song, a
+            // guard who catches you) starts with whoever it is offered to: it is offered only to the player the actor
+            // runs with, as the original offers it to its one Link. Offered to everybody in reach, it started with all
+            // of them at once and held for ever those the actor did not go on with.
+            if ((actor->flags & ACTOR_FLAG_TALK_OFFER_AUTO_ACCEPTED) && (p != player) &&
+                !Zmp_TestMutant("charla_auto_a_todos")) {
+                continue;
+            }
+            Zmp_TalkOffered(p); // ZMP (D-223): the text an earlier offer came with is not this one's
+            p->talkActor = actor;
+            p->talkActorDistance = xz;
+            p->exchangeItemId = exchangeItemId;
+            offered |= (p == player);
+        }
+        return offered;
+    }
     if ((player->actor.flags & ACTOR_FLAG_TALK) || ((exchangeItemId != EXCH_ITEM_NONE) && Player_InCsMode(play)) ||
         (!actor->isTargeted &&
          ((arg3 < fabsf(actor->yDistToPlayer)) || (player->talkActorDistance < actor->xzDistToPlayer) ||
@@ -2121,6 +2231,52 @@ s32 GiveItemEntryFromActorWithFixedRange(Actor* actor, PlayState* play, GetItemE
 // If you're doing something for randomizer, you're probably looking for GiveItemEntryFromActor
 s32 Actor_OfferGetItem(Actor* actor, PlayState* play, s32 getItemId, f32 xzRange, f32 yRange) {
     Player* player = GET_PLAYER(play);
+
+    if (Zmp_MultiActive() && (getItemId == GI_NONE) && !Zmp_TestMutant("oferta_al_mas_cercano")) {
+        // ZMP (phase 6, finding AK of reports/fase6/FAMILIAS.md, family 3): something to lift (a bomb flower, Ruto,
+        // a pot, a rock) is offered to every player in reach, each by its own distance and facing, as the talk offer
+        // of phase 5b: the nearest player, even with its back to it, no longer keeps the one facing it from picking it
+        // up. Whoever presses A lifts it; if two start in the same tick, the second lets go (Player_Action_80846050).
+        // Items (getItemId other than GI_NONE) still go to the nearest only: offered to two, both would get them.
+        s32 offered = false;
+        s32 k = -1;
+
+        while ((k = Zmp_NextPresentSlot(k)) >= 0) {
+            Player* p = gZmpSim.slots[k].player;
+            f32 xz;
+            f32 y;
+            s16 yawTowards;
+            s16 yawDiff;
+            s32 absYawDiff;
+
+            if (p == NULL || gZmpSim.slots[k].downed) {
+                continue;
+            }
+            if ((p->stateFlags1 &
+                 (PLAYER_STATE1_DEAD | PLAYER_STATE1_CHARGING_SPIN_ATTACK | PLAYER_STATE1_HANGING_OFF_LEDGE |
+                  PLAYER_STATE1_CLIMBING_LEDGE | PLAYER_STATE1_JUMPING | PLAYER_STATE1_FREEFALL |
+                  PLAYER_STATE1_FIRST_PERSON | PLAYER_STATE1_CLIMBING_LADDER)) ||
+                (Player_GetExplosiveHeld(p) >= 0) ||
+                (p->stateFlags1 & (PLAYER_STATE1_CARRYING_ACTOR | PLAYER_STATE1_IN_CUTSCENE))) {
+                continue;
+            }
+            xz = (p == player) ? actor->xzDistToPlayer : Actor_WorldDistXZToActor(actor, &p->actor);
+            y = (p == player) ? actor->yDistToPlayer : Actor_HeightDiff(actor, &p->actor);
+            yawTowards = (p == player) ? actor->yawTowardsPlayer : Actor_WorldYawTowardActor(actor, &p->actor);
+            if ((xz >= xzRange) || (fabsf(y) >= yRange)) {
+                continue;
+            }
+            yawDiff = yawTowards - p->actor.shape.rot.y;
+            absYawDiff = ABS(yawDiff);
+            if (p->getItemDirection < absYawDiff) {
+                p->getItemId = GI_NONE;
+                p->interactRangeActor = actor;
+                p->getItemDirection = absYawDiff;
+                offered |= (p == player);
+            }
+        }
+        return offered;
+    }
 
     if (!(player->stateFlags1 &
           (PLAYER_STATE1_DEAD | PLAYER_STATE1_CHARGING_SPIN_ATTACK | PLAYER_STATE1_HANGING_OFF_LEDGE |
@@ -2593,6 +2749,7 @@ void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {
     sp74 = NULL;
     unkFlag = 0;
 
+    Zmp_SetupSpawnBegin(play); // ZMP: the room's actors belong to the room that loaded them
     if (play->numSetupActors != 0) {
         actorEntry = &play->setupActorList[0];
         for (i = 0; i < play->numSetupActors; i++) {
@@ -2605,6 +2762,7 @@ void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {
         play->numSetupActors = 0;
         GameInteractor_ExecuteOnSceneSpawnActors();
     }
+    Zmp_SetupSpawnEnd(play); // ZMP
 
     if (actorCtx->unk_02 != 0) {
         actorCtx->unk_02--;
@@ -2637,6 +2795,16 @@ void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {
             }
 
             actor->sfx = 0;
+
+            // ZMP: the actor runs in the context of its player (its own slot, its parent's, or the nearest)
+            if (Zmp_MultiActive()) {
+                player = Zmp_ContextForActor(play, actor);
+                unkFlag = (player->stateFlags2 & PLAYER_STATE2_OCARINA_PLAYING) ? ACTOR_FLAG_UPDATE_DURING_OCARINA : 0;
+                sp74 = ((player->stateFlags1 & PLAYER_STATE1_TALKING) && ((player->actor.textId & 0xFF00) != 0x600))
+                           ? player->talkActor
+                           : NULL;
+                unkCondition = (*sp80 & player->stateFlags1);
+            }
 
             if (actor->init != NULL) {
                 if (Object_IsLoaded(&play->objectCtx, actor->objBankIndex)) {
@@ -2677,8 +2845,11 @@ void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {
                 actor->yawTowardsPlayer = Actor_WorldYawTowardActor(actor, &player->actor);
                 actor->flags &= ~ACTOR_FLAG_SFX_FOR_PLAYER_BODY_HIT;
 
+                // ZMP: the update no longer depends on the camera culling volume (each player has a camera in
+                // lockstep); every actor updates. Draw culling is untouched (PLAN.md 2.4 point 4).
                 if ((DECR(actor->freezeTimer) == 0) &&
-                    (actor->flags & (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_INSIDE_CULLING_VOLUME))) {
+                    (Zmp_IgnoreUpdateCulling() ||
+                     (actor->flags & (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_INSIDE_CULLING_VOLUME)))) {
                     if (actor == player->focusActor) {
                         actor->isTargeted = true;
                     } else {
@@ -2694,7 +2865,12 @@ void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {
                         actor->colorFilterTimer--;
                     }
                     if (GameInteractor_ShouldActorUpdate(actor)) {
+                        u8 zmpCsTrigger = gSaveContext.cutsceneTrigger; // ZMP (S7-A, D-176)
+                        s8 zmpTransTrigger = play->transitionTrigger;   // ZMP (D-219)
                         actor->update(actor, play);
+                        Zmp_NoteCutsceneTrigger(zmpCsTrigger); // ZMP: a cutscene this actor starts is its player's
+                        Zmp_NoteActorTransition(zmpTransTrigger, actor->category); // ZMP (D-219): and its story's
+                        Zmp_TalkScreenDone();                                      // ZMP (D-206)
                         GameInteractor_ExecuteOnActorUpdate(actor);
                     }
                     func_8003F8EC(play, &play->colCtx.dyna, actor);
@@ -2711,22 +2887,27 @@ void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {
         }
     }
 
-    actor = player->focusActor;
+    if (Zmp_MultiActive()) {
+        // ZMP: lock-on and Z-target context of every player, each with its own targeting state
+        Zmp_UpdateAttentionAll(play);
+    } else {
+        actor = player->focusActor;
 
-    if ((actor != NULL) && (actor->update == NULL)) {
-        actor = NULL;
-        Player_ReleaseLockOn(player);
-    }
-
-    if ((actor == NULL) || (player->zTargetActiveTimer < 5)) {
-        actor = NULL;
-        if (actorCtx->targetCtx.unk_4B != 0) {
-            actorCtx->targetCtx.unk_4B = 0;
-            Sfx_PlaySfxCentered(NA_SE_SY_LOCK_OFF);
+        if ((actor != NULL) && (actor->update == NULL)) {
+            actor = NULL;
+            Player_ReleaseLockOn(player);
         }
-    }
 
-    Attention_Update(&actorCtx->targetCtx, player, actor, play);
+        if ((actor == NULL) || (player->zTargetActiveTimer < 5)) {
+            actor = NULL;
+            if (actorCtx->targetCtx.unk_4B != 0) {
+                actorCtx->targetCtx.unk_4B = 0;
+                Sfx_PlaySfxCentered(NA_SE_SY_LOCK_OFF);
+            }
+        }
+
+        Attention_Update(&actorCtx->targetCtx, player, actor, play);
+    }
     TitleCard_Update(play, &actorCtx->titleCtx);
     DynaPoly_UpdateBgActorTransforms(play, &play->colCtx.dyna);
 }
@@ -2864,6 +3045,33 @@ void Actor_DrawLensOverlay(GraphicsContext* gfxCtx) {
     CLOSE_DISPS(gfxCtx);
 }
 
+void Actor_DrawLensActors(PlayState* play, s32 numInvisibleActors, Actor** invisibleActors);
+
+// ZMP (T3, D-146): the actors that react to the lens are drawn the lens way while somebody has it on (their draws run
+// the same on every machine); this screen shows them through the lens only if its own player has it on. Without it,
+// what the lens reveals is not shown (its pictures are dropped) and what it hides (a false wall) is drawn as usual.
+void Actor_ZmpDrawLensActors(PlayState* play, s32 numInvisibleActors, Actor** invisibleActors) {
+    GraphicsContext* gfxCtx = play->state.gfxCtx;
+    s32 i;
+
+    if (Zmp_LensLocal(play)) {
+        Actor_DrawLensActors(play, numInvisibleActors, invisibleActors);
+    } else if (play->roomCtx.curRoom.lensMode == LENS_MODE_HIDE_ACTORS) {
+        Gfx* opa = gfxCtx->polyOpa.p;
+        Gfx* xlu = gfxCtx->polyXlu.p;
+        Gfx* ovl = gfxCtx->overlay.p;
+        Gfx* work = gfxCtx->work.p;
+        Actor_DrawLensActors(play, numInvisibleActors, invisibleActors);
+        gfxCtx->polyOpa.p = opa;
+        gfxCtx->polyXlu.p = xlu;
+        gfxCtx->overlay.p = ovl;
+        gfxCtx->work.p = work;
+    } else {
+        for (i = 0; i < numInvisibleActors; i++) {
+            Actor_Draw(play, invisibleActors[i]);
+        }
+    }
+}
 void Actor_DrawLensActors(PlayState* play, s32 numInvisibleActors, Actor** invisibleActors) {
     Actor** invisibleActor;
     GraphicsContext* gfxCtx;
@@ -3069,8 +3277,10 @@ void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
             HREG(66) = i;
 
             if ((HREG(64) != 1) || ((HREG(65) != -1) && (HREG(65) != HREG(66))) || (HREG(68) == 0)) {
-                SkinMatrix_Vec3fMtxFMultXYZW(&play->viewProjectionMtxF, &actor->world.pos, &actor->projectedPos,
-                                             &actor->projectedW);
+                // ZMP: projected with a camera of the simulation, never the local one: the view of the player who has
+                // this actor best in sight ("on screen" counts anybody's screen)
+                SkinMatrix_Vec3fMtxFMultXYZW(Zmp_ActorViewProjection(play, actor), &actor->world.pos,
+                                             &actor->projectedPos, &actor->projectedW);
             }
 
             if ((HREG(64) != 1) || ((HREG(65) != -1) && (HREG(65) != HREG(66))) || (HREG(69) == 0)) {
@@ -3107,16 +3317,18 @@ void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
             if ((HREG(64) != 1) || ((HREG(65) != -1) && (HREG(65) != HREG(66))) || (HREG(71) == 0)) {
                 if ((actor->init == NULL) && (actor->draw != NULL) &&
                     ((actor->flags & (ACTOR_FLAG_DRAW_CULLING_DISABLED | ACTOR_FLAG_INSIDE_CULLING_VOLUME)) ||
-                     shipShouldDraw)) {
+                     shipShouldDraw || Zmp_DrawAllActors())) { // ZMP: draw side effects must not depend on the camera
                     // #endregion
                     if ((actor->flags & ACTOR_FLAG_REACT_TO_LENS) &&
-                        ((play->roomCtx.curRoom.lensMode == LENS_MODE_HIDE_ACTORS) || play->actorCtx.lensActive ||
+                        ((play->roomCtx.curRoom.lensMode == LENS_MODE_HIDE_ACTORS) ||
+                         Zmp_LensDrawn(play) || // ZMP (T3, D-146): somebody's lens, the same on every machine
                          (actor->room != play->roomCtx.curRoom.num))) {
                         assert(invisibleActorCounter < INVISIBLE_ACTOR_MAX);
                         invisibleActors[invisibleActorCounter] = actor;
                         invisibleActorCounter++;
                     } else {
                         if ((HREG(64) != 1) || ((HREG(65) != -1) && (HREG(65) != HREG(66))) || (HREG(72) == 0)) {
+                            Zmp_DrawActorContext(play, actor); // ZMP
                             Actor_Draw(play, actor);
                             actor->isDrawn = true;
                         }
@@ -3128,6 +3340,8 @@ void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
         }
     }
 
+    Zmp_RestoreAnchor(play); // ZMP
+
     if ((HREG(64) != 1) || (HREG(73) != 0)) {
         Effect_DrawAll(play->state.gfxCtx);
     }
@@ -3137,11 +3351,9 @@ void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
     }
 
     if ((HREG(64) != 1) || (HREG(72) != 0)) {
-        if (play->actorCtx.lensActive) {
-            Actor_DrawLensActors(play, invisibleActorCounter, invisibleActors);
-            if ((play->csCtx.state != CS_STATE_IDLE) || Player_InCsMode(play)) {
-                Actor_DisableLens(play);
-            }
+        if (Zmp_LensDrawn(play)) { // ZMP (T3, D-146): each player's lens
+            Actor_ZmpDrawLensActors(play, invisibleActorCounter, invisibleActors);
+            Zmp_LensCutsceneOff(play); // ZMP: the lens of each player in a cutscene, not only the anchor's
         }
     }
 
@@ -3200,7 +3412,7 @@ void func_80031B14(PlayState* play, ActorContext* actorCtx) {
         actor = actorCtx->actorLists[i].head;
         while (actor != NULL) {
             if ((actor->room >= 0) && (actor->room != play->roomCtx.curRoom.num) &&
-                (actor->room != play->roomCtx.prevRoom.num)) {
+                (actor->room != play->roomCtx.prevRoom.num) && !Zmp_RoomKept(actor->room)) { // ZMP
                 if (!actor->isDrawn) {
                     actor = Actor_Delete(actorCtx, actor, play);
                 } else {
@@ -3292,7 +3504,8 @@ Actor* Actor_RemoveFromCategory(PlayState* play, ActorContext* actorCtx, Actor* 
     actorToRemove->next = NULL;
     actorToRemove->prev = NULL;
 
-    if ((actorToRemove->room == play->roomCtx.curRoom.num) && (actorToRemove->category == ACTORCAT_ENEMY) &&
+    if (!Zmp_EnemyRemoved(play, actorToRemove) && // ZMP: per loaded room in multiplayer
+        (actorToRemove->room == play->roomCtx.curRoom.num) && (actorToRemove->category == ACTORCAT_ENEMY) &&
         (actorCtx->actorLists[ACTORCAT_ENEMY].length == 0)) {
         Flags_SetTempClear(play, play->roomCtx.curRoom.num);
     }
@@ -3397,7 +3610,7 @@ Actor* Actor_Spawn(ActorContext* actorCtx, PlayState* play, s16 actorId, f32 pos
     actor->destroy = dbEntry->destroy;
     actor->update = dbEntry->update;
     actor->draw = dbEntry->draw;
-    actor->room = play->roomCtx.curRoom.num;
+    actor->room = Zmp_SpawnRoom(play); // ZMP: the spawner's room when several rooms are loaded
     actor->home.pos.x = posX;
     actor->home.pos.y = posY;
     actor->home.pos.z = posZ;
@@ -3451,10 +3664,12 @@ void Actor_SpawnTransitionActors(PlayState* play, ActorContext* actorCtx) {
         if (transitionActor->id >= 0) {
             if (((transitionActor->sides[0].room >= 0) &&
                  ((transitionActor->sides[0].room == play->roomCtx.curRoom.num) ||
-                  (transitionActor->sides[0].room == play->roomCtx.prevRoom.num))) ||
+                  (transitionActor->sides[0].room == play->roomCtx.prevRoom.num) ||
+                  Zmp_RoomKept(transitionActor->sides[0].room))) || // ZMP
                 ((transitionActor->sides[1].room >= 0) &&
                  ((transitionActor->sides[1].room == play->roomCtx.curRoom.num) ||
-                  (transitionActor->sides[1].room == play->roomCtx.prevRoom.num)))) {
+                  (transitionActor->sides[1].room == play->roomCtx.prevRoom.num) ||
+                  Zmp_RoomKept(transitionActor->sides[1].room)))) { // ZMP
                 Actor_Spawn(actorCtx, play, (s16)(transitionActor->id & 0x1FFF), transitionActor->pos.x,
                             transitionActor->pos.y, transitionActor->pos.z, 0, transitionActor->rotY, 0,
                             (i << 0xA) + transitionActor->params);
@@ -3660,6 +3875,7 @@ Actor* Actor_Find(ActorContext* actorCtx, s32 actorId, s32 actorCategory) {
  * While the screen flashes, the game freezes.
  */
 void Enemy_StartFinishingBlow(PlayState* play, Actor* actor) {
+    Zmp_OnFinishingBlow(); // ZMP: the white flash is shown to the player who struck
     play->actorCtx.freezeFlashTimer = 5;
     SoundSource_PlaySfxAtFixedWorldPos(play, &actor->world.pos, 20, NA_SE_EN_LAST_DAMAGE);
 }
@@ -4296,6 +4512,7 @@ s32 Npc_UpdateTalking(PlayState* play, Actor* actor, s16* talkState, f32 interac
                       NpcUpdateTalkStateFunc updateTalkState) {
     s16 x;
     s16 y;
+    s32 offered; // ZMP (D-223)
 
     if (Actor_ProcessTalkRequest(actor, play)) {
         *talkState = NPC_TALK_STATE_TALKING;
@@ -4307,14 +4524,16 @@ s32 Npc_UpdateTalking(PlayState* play, Actor* actor, s16* talkState, f32 interac
         return false;
     }
 
-    Actor_GetScreenPos(play, actor, &x, &y);
+    Actor_GetTalkScreenPos(play, actor, &x, &y, 0, SCREEN_WIDTH, 0, SCREEN_HEIGHT); // ZMP (D-206): per player
 
     if ((x < 0) || (x > SCREEN_WIDTH) || (y < 0) || (y > SCREEN_HEIGHT)) {
         // Actor is offscreen
         return false;
     }
 
-    if (!Actor_OfferTalk(actor, play, interactRange)) {
+    offered = Actor_OfferTalk(actor, play, interactRange);
+    Zmp_NpcTalkTextIds(play, actor, getTextId); // ZMP (D-223): the text of each other player it was offered to
+    if (!offered) {
         return false;
     }
 

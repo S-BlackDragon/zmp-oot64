@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic> // (ZMP web: libc++ needs them spelled out)
+#include <mutex>
 #include <thread>
 #include <condition_variable>
 

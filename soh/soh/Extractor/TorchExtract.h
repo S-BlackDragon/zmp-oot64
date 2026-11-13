@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <string>
 
 // No torch types here; TorchExtract.cpp is the only TU that includes Companion.h.
@@ -15,7 +16,9 @@ size_t CountAssetFiles(const std::string& ymlDir);
 // archive name (oot.o2r, oot-mq.o2r) from config.yml by hashing the ROM, so the name it chose
 // is returned rather than assumed. Empty if extraction threw or produced no archive.
 // Increments progress once per asset file.
+// Increments progress, and calls onAssetDone if set, once per asset file. (ZMP web: the worker's progress bar.)
 std::string Extract(const std::string& romPath, const std::string& srcDir, const std::string& destDir,
-                    const std::string& portVersion, std::atomic<size_t>* progress);
+                    const std::string& portVersion, std::atomic<size_t>* progress,
+                    std::function<void()> onAssetDone = nullptr);
 
 } // namespace SohTorch

@@ -44,14 +44,21 @@ void Main_LogSystemHeap(void) {
 }
 
 #ifdef _WIN32
+int Zmp_InstallNoActivateHook(void); // ZMP: D-063
+void Zmp_InstallBootLog(void);       // ZMP: finding R
 int SDL_main(int argc, char* argv[]) {
-    AllocConsole();
-    (void)freopen("CONIN$", "r", stdin);
-    (void)freopen("CONOUT$", "w", stdout);
-    (void)freopen("CONOUT$", "w", stderr);
+    Zmp_InstallBootLog(); // ZMP: finding R, before anything else
+    // ZMP: test instances never take the focus (D-063); they also skip the console window, which flashes and can
+    // take the focus before it is hidden.
+    if (!Zmp_InstallNoActivateHook()) {
+        AllocConsole();
+        (void)freopen("CONIN$", "r", stdin);
+        (void)freopen("CONOUT$", "w", stdout);
+        (void)freopen("CONOUT$", "w", stderr);
 #ifndef _DEBUG
-    ShowWindow(GetConsoleWindow(), SW_HIDE);
+        ShowWindow(GetConsoleWindow(), SW_HIDE);
 #endif
+    }
     // Allow non-ascii characters for Windows
     setlocale(LC_ALL, ".UTF8");
 
@@ -66,8 +73,10 @@ int main(int argc, char* argv[]) {
 
     Heaps_Alloc();
     Main(0);
+#ifndef __EMSCRIPTEN__
     DeinitOTR();
     Heaps_Free();
+#endif
     return 0;
 }
 
@@ -138,6 +147,10 @@ void Main(void* arg) {
     osStartThread(&sGraphThread);
     osSetThreadPri(0, Z_PRIORITY_SCHED);
 
+#ifdef __EMSCRIPTEN__
+    Graph_ThreadEntry(0);
+    return;
+#else
     Graph_ThreadEntry(0);
 
     while (true) {
@@ -156,4 +169,5 @@ void Main(void* arg) {
     osDestroyThread(&sGraphThread);
     func_800FBFD8();
     osSyncPrintf("mainproc 実行終了\n"); // "End of execution"
+#endif
 }

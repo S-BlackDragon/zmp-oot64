@@ -1,5 +1,6 @@
 #include <libultraship/libultra.h>
 #include "global.h"
+#include "soh/Zmp/Sim/ZmpPlayers.h" // ZMP
 #include "vt.h"
 
 #include "soh/Enhancements/audio/AudioEditor.h"
@@ -127,6 +128,8 @@ void Audio_ClearBGMMute(u8 channelIdx) {
 void Audio_PlaySfxGeneral(u16 sfxId, Vec3f* pos, u8 token, f32* freqScale, f32* vol, s8* reverbAdd) {
     size_t i;
     SoundRequest* req;
+
+    Zmp_AudioSfxPlayed(sfxId); // ZMP: the metronome's duration is simulated in ticks in lockstep
 
     if (!gSoundBankMuted[SFX_BANK_SHIFT(sfxId)]) {
         req = &sSoundRequests[sSoundRequestWriteIndex];
@@ -377,11 +380,13 @@ void Audio_ChooseActiveSounds(u8 bankId) {
         } else if (gSoundBanks[bankId][entryIndex].state != SFX_STATE_EMPTY) {
             entry = &gSoundBanks[bankId][entryIndex];
 
+            // ZMP: where a sound is heard from (distance, priority, pan, volume) is read through Zmp_SfxCoord: in a
+            // session every player hears it from its own camera (presentation only, phase 5b)
             if (&gSfxDefaultPos.x == entry[0].posX) {
                 entry->dist = 0.0f;
             } else {
-                tempf1 = *entry->posY * 1;
-                entry->dist = (SQ(*entry->posX) + SQ(tempf1) + SQ(*entry->posZ)) * 1;
+                tempf1 = Zmp_SfxCoord(entry->posX, 1) * 1;
+                entry->dist = (SQ(Zmp_SfxCoord(entry->posX, 0)) + SQ(tempf1) + SQ(Zmp_SfxCoord(entry->posX, 2))) * 1;
             }
             sfxImportance = entry->sfxImportance;
             if (entry->sfxParams & 0x10) {
@@ -389,13 +394,13 @@ void Audio_ChooseActiveSounds(u8 bankId) {
             } else {
                 if (entry->dist > 0x7FFFFFD0) {
                     entry->dist = 0x70000008;
-                    osSyncPrintf(D_80133344, entry->sfxId, entry->posX, entry->posZ, *entry->posX, *entry->posY,
-                                 *entry->posZ);
+                    osSyncPrintf(D_80133344, entry->sfxId, entry->posX, entry->posZ, Zmp_SfxCoord(entry->posX, 0),
+                                 Zmp_SfxCoord(entry->posX, 1), Zmp_SfxCoord(entry->posX, 2));
                 }
                 temp3 = entry->sfxId; // fake
                 entry->priority = (u32)entry->dist + (SQ(0xFF - sfxImportance) * SQ(76)) + temp3 - temp3;
-                if (*entry->posZ < 0.0f) {
-                    entry->priority += (s32)(-*entry->posZ * 6.0f);
+                if (Zmp_SfxCoord(entry->posX, 2) < 0.0f) {
+                    entry->priority += (s32)(-Zmp_SfxCoord(entry->posX, 2) * 6.0f);
                 }
             }
             if (entry->dist > SQ(1e5f)) {
@@ -738,6 +743,13 @@ void func_800F8F88(void) {
 u8 Audio_IsSfxPlaying(u32 sfxId) {
     SoundBankEntry* entry;
     u8 entryIndex = gSoundBanks[SFX_BANK(sfxId)][0].next;
+    s32 zmpPlaying;
+
+    // ZMP: game logic asks whether the metronome still sounds (Skull Kid, Lost Woods memory game); the
+    // answer came from the audio thread. In lockstep it is a fixed duration in game ticks.
+    if (Zmp_AudioSfxPlaying(sfxId, &zmpPlaying)) {
+        return zmpPlaying;
+    }
 
     while (entryIndex != 0xFF) {
         entry = &gSoundBanks[SFX_BANK(sfxId)][entryIndex];
