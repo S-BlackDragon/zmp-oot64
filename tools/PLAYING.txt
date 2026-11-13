@@ -1,0 +1,27 @@
+ZMP - online co-op for The Legend of Zelda: Ocarina of Time
+===========================================================
+
+Up to 6 players, each with their own real Link, all seeing exactly the same world. Built on Ship of Harkinian.
+This package contains NO part of the original game: you need your own ROM.
+
+QUICK START
+1. Unzip this folder somewhere normal (for example C:\Games\ZMP), not inside Program Files.
+2. Open soh.exe. If Windows says "Windows protected your PC": More info > Run anyway.
+3. First time only: "No O2R files found. Generate one now?" > Yes > choose your ROM (.z64/.n64/.v64).
+   Wait one or two minutes. "Extract another?" > No.
+   EVERYONE IN A ROOM MUST USE THE SAME ROM VERSION and this same zip.
+4. In the "Sala ZMP" window (ZMP room; if hidden: Esc > Network > ZMP > "Mostrar u ocultar ventana de sala") type:
+     Servidor (host) = the server address your host gave you
+     Puerto          = 47100
+     Sala            = the room name (the same for everyone)
+     Nombre          = your name (different for each player)
+   The room's creator loads a save first and then presses "Conectar"; the others press "Conectar" from the
+   file select screen.
+5. Play. To revive a downed friend, stand next to them and hold A for 3 seconds.
+
+HOSTING: someone runs the small room server (zmp-server, in the same release), on their PC, a VPS or over
+Tailscale/ZeroTier. Guides, browser mode and troubleshooting:
+  https://github.com/S-BlackDragon/zmp-oot64/tree/zmp/docs-zmp/en
+
+Problems: send the "logs" folder of this folder with a description and the time it happened.
+ZMP's code is MIT licensed; Ship of Harkinian keeps its own terms (see LICENSING.md in the repository).
