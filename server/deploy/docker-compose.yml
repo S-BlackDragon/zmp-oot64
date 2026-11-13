@@ -1,0 +1,36 @@
+# zmp-server with Docker Compose (any Linux PC or VPS with Docker). From this folder:
+#   mkdir -p data && sudo chown 1000:1000 data      (the container writes the saves as uid 1000)
+#   docker compose up -d --build
+#   docker compose logs -f zmp-server
+# One TCP port, 47100, serves the desktop game (raw TCP), the browser game (WebSocket) and, if you enable it below,
+# the browser game's files.
+name: zmp
+
+services:
+  zmp-server:
+    build:
+      context: ..
+    image: zmp-server:local
+    container_name: zmp-server
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    ports:
+      - "47100:47100/tcp"
+    volumes:
+      - ./data:/data
+      # Browser game: put the web build (index.html, soh.js, soh.wasm, ...) in ./web and uncomment these two lines.
+      # - ./web:/web:ro
+    # command: ["-listen", ":47100", "-data", "/data", "-web", "/web"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
