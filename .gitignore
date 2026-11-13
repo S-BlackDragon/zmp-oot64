@@ -463,3 +463,17 @@ soh/properties.h
 *.o2r
 
 graphify-out/
+
+# ZMP
+/dist/
+/vcpkg/
+server/zmp-server
+server/zmp-server.exe
+server/deploy/data/
+server/deploy/web/
+server/deploy/caddy-data/
+server/deploy/Caddyfile
+*.z64
+*.n64
+*.v64
+__pycache__/

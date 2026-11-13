@@ -1,0 +1,72 @@
+# ZMP CI: server tests on Linux; Windows player build of the game, packaged and checked for ROM data.
+# The game's multiplayer tests need a GPU and several game instances, so they do not run here.
+name: zmp
+on:
+  push:
+    branches: [zmp]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - name: Test
+        working-directory: server
+        run: go test ./...
+      - name: Build release binaries
+        run: python3 tools/build_server.py --version ci-${{ github.run_number }} --skip-tests
+
+  clang-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format 14
+        run: pip install clang-format==14.0.6
+      - name: Check formatting of ZMP code
+        run: |
+          files=$(find soh/soh/Zmp -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" \))
+          clang-format --dry-run --Werror $files
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        run: choco install ninja -y
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-zmp-vcpkg-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: ${{ runner.os }}-zmp-vcpkg-
+          path: vcpkg
+      - uses: TheMrMilchmann/setup-msvc-dev@v4
+        with:
+          arch: x64
+      - name: Build (player build, no test harness)
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: |
+          cmake -S . -B build/win -G Ninja -DCMAKE_MAKE_PROGRAM=ninja -DCMAKE_BUILD_TYPE:STRING=Release -DZMP_HARNESS=OFF
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          cmake --build build/win --target GenerateSohOtr --config Release
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          cmake --build build/win --config Release --parallel 4
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          cd build/win; cpack -G ZIP -C Release; cd ../..
+      - name: Package and check (no ROM data)
+        run: |
+          $zip = (Get-ChildItem _packages/*.zip | Select-Object -First 1).FullName
+          python tools/package_windows.py --build $zip --version ci-${{ github.run_number }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZMP-windows
+          path: dist/*.zip
+          retention-days: 14
