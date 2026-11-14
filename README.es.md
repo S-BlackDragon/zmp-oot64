@@ -1,5 +1,7 @@
 # ZMP: cooperativo en línea para Ocarina of Time
 
+<p align="center"><img src="branding-zmp/icono-zmp-512.png" alt="Icono de ZMP" width="160"></p>
+
 [English](README.md)
 
 **ZMP** (Zelda Multiplayer) permite que **de 2 a 6 amigos jueguen juntos a The Legend of Zelda: Ocarina of Time en
