@@ -1,5 +1,7 @@
 # Making a release (maintainers)
 
+**English** | [Español](../es/release.md)
+
 A GitHub Release of ZMP has these files, all built from the same commit of this repository:
 
 | File | What | Made by |

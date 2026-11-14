@@ -1,5 +1,7 @@
 # 4. Hospedar en tu propio PC (redirección de puertos)
 
+[English](../en/04-host-on-your-pc.md) | **Español**
+
 Una persona del grupo ejecuta el servidor de salas, `zmp-server`. Es un único programa pequeño: no ejecuta el juego,
 solo ordena y reenvía las entradas de todos y guarda las partidas de las salas, así que casi no usa CPU, memoria ni
 ancho de banda. El anfitrión puede jugar en el mismo PC al mismo tiempo.

@@ -1,5 +1,7 @@
 # 6. Hospedar en un VPS con Docker (siempre encendido)
 
+[English](../en/06-host-on-a-vps.md) | **Español**
+
 Un pequeño servidor Linux alquilado (un VPS) mantiene el servidor de salas encendido todo el tiempo, así que el grupo
 puede jugar sin que el PC de nadie haga de anfitrión. `zmp-server` necesita muy poco: basta el VPS más pequeño de
 cualquier proveedor (nunca ejecuta el juego). Elige uno en la misma región que tu grupo.

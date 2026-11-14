@@ -1,8 +1,8 @@
 # ZMP: cooperativo en línea para Ocarina of Time
 
-<p align="center"><img src="branding-zmp/icono-zmp-512.png" alt="Icono de ZMP" width="160"></p>
+[English](README.md) | **Español**
 
-[English](README.md)
+<p align="center"><img src="branding-zmp/icono-zmp-512.png" alt="Icono de ZMP" width="160"></p>
 
 **ZMP** (Zelda Multiplayer) permite que **de 2 a 6 amigos jueguen juntos a The Legend of Zelda: Ocarina of Time en
 línea**, cada uno con su propio Link de verdad, y todos viendo exactamente el mismo mundo: los mismos enemigos, los
@@ -103,7 +103,7 @@ navegador, Go para el servidor.
 El código propio de ZMP (`server/`, `web/`, `tools/`, `docs-zmp/`, `soh/soh/Zmp/`, `soh/web/zmp-web.js` y nuestros
 cambios marcados) tiene la licencia MIT de [LICENSE-ZMP](LICENSE-ZMP), titular S-BlackDragon, y solo cubre esos
 archivos. Todo lo demás pertenece a otros proyectos y mantiene sus términos: Ship of Harkinian no tiene archivo de
-licencia propio; libultraship y Torch son MIT. [LICENSING.md](LICENSING.md) explica con exactitud qué es cada cosa,
+licencia propio; libultraship y Torch son MIT. [LICENSING.es.md](LICENSING.es.md) explica con exactitud qué es cada cosa,
 carpeta por carpeta. No se distribuye ninguna ROM ni ningún asset del juego.
 
 ## Créditos

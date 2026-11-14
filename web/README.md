@@ -1,5 +1,7 @@
 # web/
 
+**English** | [Español](README.es.md)
+
 The browser version of ZMP is the same game as the desktop one, compiled to WebAssembly with Emscripten from
 the repository (the game's code is at the root, as in Ship of Harkinian). This folder only has the script that turns that build into a folder you can serve:
 

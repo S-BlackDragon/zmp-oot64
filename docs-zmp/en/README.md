@@ -1,6 +1,6 @@
 # ZMP guides (English)
 
-[Versión en español](../es/README.md)
+**English** | [Español](../es/README.md)
 
 Start here if you just want to play:
 

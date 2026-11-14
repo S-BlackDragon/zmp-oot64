@@ -1,5 +1,7 @@
 # Building from source
 
+**English** | [Español](../es/build.md)
+
 Everything needed is in this repository:
 
 | Folder | What | Build tool |

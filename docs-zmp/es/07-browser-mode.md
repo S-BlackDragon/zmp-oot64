@@ -1,5 +1,7 @@
 # 7. Modo navegador
 
+[English](../en/07-browser-mode.md) | **Español**
+
 ZMP también funciona en un navegador web: el mismo juego y el mismo multijugador, compilados a WebAssembly. No hay
 nada que instalar, y funciona en cualquier sistema operativo de escritorio con un **Chrome, Edge o Firefox** reciente.
 Los teléfonos y las tabletas no son compatibles.

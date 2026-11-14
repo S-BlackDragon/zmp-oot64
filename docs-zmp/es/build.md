@@ -1,5 +1,7 @@
 # Compilar desde el código fuente
 
+[English](../en/build.md) | **Español**
+
 Todo lo necesario está en este repositorio:
 
 | Carpeta | Qué contiene | Herramienta de compilación |

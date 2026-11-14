@@ -1,5 +1,7 @@
 # 8. Troubleshooting
 
+**English** | [Español](../es/08-troubleshooting.md)
+
 ZMP's own messages in the game are in Spanish; each one is translated here.
 
 ## When joining a room

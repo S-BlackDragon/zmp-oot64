@@ -1,5 +1,7 @@
 # Publicar una versión (para mantenedores)
 
+[English](../en/release.md) | **Español**
+
 Una versión (Release) de ZMP en GitHub tiene estos archivos, todos compilados a partir del mismo commit de este
 repositorio:
 

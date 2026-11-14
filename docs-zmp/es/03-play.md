@@ -1,5 +1,7 @@
 # 3. Jugar juntos
 
+[English](../en/03-play.md) | **Español**
+
 Antes de empezar, el anfitrión del grupo da a todos tres cosas:
 
 - la **dirección del servidor** (una IP como `203.0.113.10`, un nombre como `my-pc.tailnet-name.ts.net` o un dominio);

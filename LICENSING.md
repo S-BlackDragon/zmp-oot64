@@ -1,6 +1,6 @@
 # Licensing
 
-[Resumen en español al final](#resumen-en-español)
+**English** | [Español](LICENSING.es.md)
 
 This repository mixes **our own code (ZMP)**, which is under the MIT license in [`LICENSE-ZMP`](LICENSE-ZMP), with **code from
 other projects**, which keeps the terms its authors gave it. Our MIT license does not and cannot change those terms.
@@ -20,7 +20,7 @@ release artifact for ROMs and ROM-derived archives before it is published.
 | `server/` | ZMP | MIT ([`LICENSE-ZMP`](LICENSE-ZMP)) |
 | `web/` | ZMP | MIT |
 | `tools/` | ZMP | MIT |
-| `docs-zmp/`, `README.md`, `README.es.md`, `LICENSING.md`, `LICENSE-ZMP`, `.github/workflows/zmp.yml` | ZMP | MIT |
+| `docs-zmp/`, `README.md`, `README.es.md`, `LICENSING.md`, `LICENSING.es.md`, `LICENSE-ZMP`, `.github/workflows/zmp.yml` | ZMP | MIT |
 | `soh/soh/Zmp/` | ZMP | MIT |
 | `soh/web/zmp-web.js` | ZMP | MIT |
 | Lines and blocks marked `// ZMP:` (or `# ZMP`) inside other files | ZMP's modifications | Our modifications are offered under MIT as far as they can be separated from the code around them. The files as a whole keep the terms of the project they come from (rows below). |
@@ -56,21 +56,3 @@ The build downloads other libraries; they are not stored in this repository and 
 or endorsed by Nintendo, HarbourMasters (Ship of Harkinian), zeldaret or ShipWeb**. Please do not ask those projects
 for help with ZMP; open an issue in this repository instead. We do not condone piracy: dump your own copy of the
 game.
-
----
-
-## Resumen en español
-
-- Lo nuestro (ZMP) es **MIT** ([`LICENSE-ZMP`](LICENSE-ZMP), que solo cubre esto; a propósito no hay un `LICENSE` en
-  la raíz): `server/`, `web/`, `tools/`, `docs-zmp/`, los README, `soh/soh/Zmp/`,
-  `soh/web/zmp-web.js`, y nuestras modificaciones marcadas con `// ZMP:` dentro de otros archivos (en la medida
-  en que se puedan separar del código de alrededor).
-- El resto del repositorio (el juego, en la raíz) **no es nuestro y no está bajo nuestra licencia MIT**: es Ship of Harkinian (HarbourMasters,
-  basado en la decompilación de zeldaret), cuyo repositorio **no tiene archivo de licencia** (este repositorio es un fork de GitHub suyo); las piezas web vienen de
-  ShipWeb (samfisher753), en la misma situación. `libultraship/` y `torch/` son **MIT** de sus autores, con
-  sus archivos `LICENSE` sin tocar; las bibliotecas dentro de `torch/lib/`, el randomizer (`3drando`, MIT) y las
-  fuentes conservan sus licencias.
-- **No se distribuye ninguna ROM ni ningún asset del juego**, ni en el repositorio ni en las releases: cada jugador
-  genera los datos desde su propia copia. `tools/check_release.py` lo comprueba antes de publicar.
-- *Zelda* y *Ocarina of Time* son marcas de Nintendo. ZMP es un proyecto de fans sin relación con Nintendo,
-  HarbourMasters, zeldaret ni ShipWeb.

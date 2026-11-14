@@ -1,5 +1,7 @@
 # 7. Browser mode
 
+**English** | [Español](../es/07-browser-mode.md)
+
 ZMP also runs in a web browser: the same game and the same multiplayer, compiled to WebAssembly. Nothing to install,
 and it works on any desktop OS with a recent **Chrome, Edge or Firefox**. Phones and tablets are not supported.
 

@@ -1,5 +1,7 @@
 # 1. Get the game
 
+**English** | [Español](../es/01-get-the-game.md)
+
 You need **Windows 10 or 11, 64-bit** for the desktop game, or a recent desktop browser (Chrome, Edge, Firefox) for
 the [browser mode](07-browser-mode.md). A controller is recommended; the keyboard works too.
 

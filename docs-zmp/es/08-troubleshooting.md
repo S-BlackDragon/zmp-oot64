@@ -1,5 +1,7 @@
 # 8. Solución de problemas
 
+[English](../en/08-troubleshooting.md) | **Español**
+
 Los mensajes propios de ZMP dentro del juego están en español; aquí se explica cada uno.
 
 ## Al unirse a una sala

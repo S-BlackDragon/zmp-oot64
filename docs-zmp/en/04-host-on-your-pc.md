@@ -1,5 +1,7 @@
 # 4. Host on your own PC (port forwarding)
 
+**English** | [Español](../es/04-host-on-your-pc.md)
+
 One person in the group runs the room server, `zmp-server`. It is a single small program: it does not run the game,
 it only orders and relays everyone's inputs and keeps the rooms' saves, so it barely uses CPU, memory or bandwidth.
 The host can play on the same PC at the same time.

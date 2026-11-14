@@ -1,5 +1,7 @@
 # 3. Play together
 
+**English** | [Español](../es/03-play.md)
+
 Before you start, the host of the group gives everyone three things:
 
 - the **server address** (an IP like `203.0.113.10`, a name like `my-pc.tailnet-name.ts.net`, or a domain);

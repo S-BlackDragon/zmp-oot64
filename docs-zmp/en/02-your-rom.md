@@ -1,5 +1,7 @@
 # 2. Your ROM
 
+**English** | [Español](../es/02-your-rom.md)
+
 ZMP, like Ship of Harkinian, ships **no part of the original game**. The graphics, sounds, music and text are built
 on your PC from your own legally obtained copy of *The Legend of Zelda: Ocarina of Time* (a ROM dump). Nobody can send
 you the ROM or the files made from it, and you must not share yours.

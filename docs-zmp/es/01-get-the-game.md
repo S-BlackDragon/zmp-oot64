@@ -1,5 +1,7 @@
 # 1. Obtener el juego
 
+[English](../en/01-get-the-game.md) | **Español**
+
 Necesitas **Windows 10 u 11, de 64 bits** para el juego de escritorio, o un navegador de escritorio reciente (Chrome,
 Edge, Firefox) para el [modo navegador](07-browser-mode.md). Se recomienda un mando; el teclado también funciona.
 

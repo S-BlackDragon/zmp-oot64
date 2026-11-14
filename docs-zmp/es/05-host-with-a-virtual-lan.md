@@ -1,5 +1,7 @@
 # 5. Hospedar con Tailscale o ZeroTier (sin cambios en el router)
 
+[English](../en/05-host-with-a-virtual-lan.md) | **Español**
+
 Una LAN virtual pone tus PC en una red privada a través de internet, como si estuvieran en la misma casa. No se abre
 nada en tu router, funciona detrás de CGNAT y solo las personas a las que invitas pueden llegar al servidor. Los dos
 servicios de abajo tienen planes gratuitos para grupos pequeños. ZMP no depende de ninguno: cualquier VPN o LAN virtual

@@ -1,5 +1,7 @@
 # 6. Host on a VPS with Docker (always on)
 
+**English** | [Español](../es/06-host-on-a-vps.md)
+
 A small rented Linux server (a VPS) keeps the room server on all the time, so the group can play without anyone's
 PC hosting. `zmp-server` needs very little: the smallest VPS of any provider is enough (it never runs the game).
 Pick one in the same region as your group.

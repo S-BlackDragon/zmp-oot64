@@ -1,8 +1,8 @@
 # ZMP: online co-op for Ocarina of Time
 
-<p align="center"><img src="branding-zmp/icono-zmp-512.png" alt="ZMP icon" width="160"></p>
+**English** | [Español](README.es.md)
 
-[Español](README.es.md)
+<p align="center"><img src="branding-zmp/icono-zmp-512.png" alt="ZMP icon" width="160"></p>
 
 **ZMP** (Zelda Multiplayer) lets **2 to 6 friends play The Legend of Zelda: Ocarina of Time together online**, each
 with their own real Link, all seeing exactly the same world: the same enemies, the same hits, the same puzzles, frame
