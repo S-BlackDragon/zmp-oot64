@@ -19,7 +19,6 @@
 #include <libultraship/libultra/controller.h>
 
 #include "ZmpClient.h"
-#include "LogShip.h"
 #include "soh/Zmp/ZmpCVars.h"
 #include <ship/Context.h>
 #include <ship/debug/Console.h>
@@ -784,7 +783,6 @@ void HandleControl(json& msg) {
         }
         Log("net: RESYNC bad_tick=" + std::to_string(bad) + " T=" + std::to_string(T) +
             (target ? " (this client reloads the leader's state)" : ""));
-        LogShip::OnDesync(bad); // (D-247: the logs and the dump go to the server)
         if (target && sPhase == Phase::Running) {
             sResyncs++;
             sResyncHold = true;

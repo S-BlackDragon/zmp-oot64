@@ -498,13 +498,6 @@ void RoomWindow::DrawConnectionForm() {
     }
     ImGui::EndDisabled();
 
-    // D-247: this PC's logs go to the server when the server collects them (it says so when you connect).
-    bool upload = CVarGetInteger(ZMP_CVAR_LOGS_UPLOAD, 1) != 0;
-    if (ImGui::Checkbox("Enviar mis registros al servidor si los recoge (para que puedan ver los fallos)", &upload)) {
-        CVarSetInteger(ZMP_CVAR_LOGS_UPLOAD, upload ? 1 : 0);
-        Ship::Context::GetRawInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
-    }
-
     bool valid = !host.empty() && port > 0 && port < 65536 && !room.empty() && !name.empty();
     if (!active) {
         ImGui::BeginDisabled(!valid);

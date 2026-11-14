@@ -13,8 +13,6 @@
 #pragma comment(lib, "Dbghelp.lib")
 #endif
 
-extern "C" void (*gShipCrashHook)(void) = nullptr; // ZMP (D-247)
-
 namespace Ship {
 
 #define WRITE_VAR_LINE(handler, varName, varValue) \
@@ -201,9 +199,6 @@ static void ErrorHandler(int sig, siginfo_t* sigInfo, void* data) {
 
     Context::GetRawInstance()->GetLogger()->flush();
     spdlog::shutdown();
-    if (gShipCrashHook != nullptr) { // ZMP (D-247)
-        gShipCrashHook();
-    }
     exit(1);
 }
 
@@ -408,9 +403,6 @@ extern "C" LONG WINAPI seh_filter(PEXCEPTION_POINTERS ex) {
 
     WRITE_VAR_LINE(crashHandler, "Exception: ", exceptionString);
     crashHandler->PrintStack(ex->ContextRecord);
-    if (gShipCrashHook != nullptr) { // ZMP (D-247)
-        gShipCrashHook();
-    }
     MessageBoxA(nullptr,
                 (Context::GetRawInstance()->GetName() +
                  " has crashed. Please upload the logs to the support channel in discord.")

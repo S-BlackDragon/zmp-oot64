@@ -76,11 +76,6 @@
 // The diagnostic lines at the top (connection, tick, delay, hash): off in the demos, on in the test instances.
 #define ZMP_CVAR_DEBUG_OVERLAY CVAR_ZMP("DebugOverlay")
 
-// D-247: this client's logs go to the server it plays on when that server collects them (WELCOME log_collect).
-// Upload: 1 (default) allowed, 0 never. UploadEvery: seconds between two uploads while connected (default 180).
-#define ZMP_CVAR_LOGS_UPLOAD CVAR_ZMP("Logs.Upload")
-#define ZMP_CVAR_LOGS_UPLOAD_EVERY CVAR_ZMP("Logs.UploadEvery")
-
 #define ZMP_DEFAULT_HOST "127.0.0.1"
 #define ZMP_DEFAULT_PORT 47100
 #define ZMP_DEFAULT_ROOM "zmp"

@@ -39,7 +39,6 @@
 #include "ZmpLog.h"
 #include "Harness/Harness.h"
 #include "Net/ZmpClient.h"
-#include "Net/LogShip.h"
 #include "Net/Lockstep.h"
 #include "Sim/Session.h"
 #include "State/FixedHeap.h"
@@ -56,9 +55,6 @@ extern PlayState* gPlayState;
 }
 
 extern "C" void gfx_texture_cache_clear();
-#ifndef __EMSCRIPTEN__
-extern "C" void (*gShipCrashHook)(void); // (libultraship CrashHandler.cpp, D-247)
-#endif
 #ifdef ZMP_HARNESS
 extern "C" void Zmp_TestHitOnClose(s32 slot); // (Sim/Players.cpp, tests)
 #endif
@@ -1026,9 +1022,8 @@ static LONG WINAPI TestCrashFilter(PEXCEPTION_POINTERS ex) {
     Zmp::Log(line);
     auto handler = Ship::Context::GetRawInstance()->GetCrashHandler();
     if (handler != nullptr) {
-        handler->PrintStack(ex->ContextRecord); // (flushes the game's log; the crash hook below sends it)
+        handler->PrintStack(ex->ContextRecord);
     }
-    Zmp::LogShip::OnCrash(); // (D-247; this filter replaces the game's, which calls the same through gShipCrashHook)
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #endif
@@ -1090,10 +1085,6 @@ extern "C" void Zmp_Init(void) {
 #ifdef __EMSCRIPTEN__
     ApplyWebConfig();
 #endif
-    Zmp::LogShip::Start(); // (D-247: before this run's first ZMP line)
-#ifndef __EMSCRIPTEN__
-    gShipCrashHook = [] { Zmp::LogShip::OnCrash(); };
-#endif
     Zmp::Log("zmp: init (name=" + std::string(CVarGetString(ZMP_CVAR_NAME, "Player")) + ")");
 
     auto gui = Ship::Context::GetRawInstance()->GetWindow()->GetGui();
@@ -1136,7 +1127,6 @@ extern "C" void Zmp_Deinit(void) {
     Zmp::Harness::Stop();
 #endif
     Zmp::Client::Get().Disconnect();
-    Zmp::LogShip::Stop(); // (the session's last upload, then the mark of a clean exit)
     sRoomWindow = nullptr;
     Zmp::LogClose();
 }
@@ -1220,7 +1210,6 @@ extern "C" void Zmp_OnFrameBegin(void) {
     }
 #endif
     Zmp::Sim::OnFrameBegin();
-    Zmp::LogShip::Poll();
 }
 
 extern "C" void Zmp_OnPadRead(void* pads) {
