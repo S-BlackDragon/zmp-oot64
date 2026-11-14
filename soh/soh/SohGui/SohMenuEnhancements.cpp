@@ -1820,7 +1820,7 @@ void SohMenu::AddMenuEnhancements() {
         .CVar(CVAR_ENHANCEMENT("BounceOffWalls"))
         .Options(
             CheckboxOptions().Tooltip("Allows Link to bounce off walls when linear velocity is high enough. This is "
-                                      "relevant when frequently being knocked back by traps, CC, or in Anchor."));
+                                      "relevant when frequently being knocked back by traps or CC."));
     AddWidget(path, "Mirrored World", WIDGET_CVAR_COMBOBOX)
         .CVar(CVAR_ENHANCEMENT("MirroredWorldMode"))
         .Options(

@@ -83,7 +83,7 @@ void SkeletonPatcher::RegisterSkeleton(std::string& path, SkelAnime* skelAnime) 
     if (IsLinkSkeletonPath(info.vanillaSkeletonPath)) {
         info.isLocalPlayer = IsLocalPlayerSkelAnime(skelAnime);
 
-        // Skip registering skeletons that do not belong to the local player (e.g. Anchor dummy actors)
+        // Skip registering skeletons that do not belong to the local player (ZMP: the other players' Links, D-263)
         if (!info.isLocalPlayer) {
             return;
         }

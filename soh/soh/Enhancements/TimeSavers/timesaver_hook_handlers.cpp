@@ -823,8 +823,8 @@ void TimeSaverOnVanillaBehaviorHandler(GIVanillaBehavior id, bool* should, va_li
                     // need to VB prevent the item gives that happen during the cutscene.
                     *should = false;
                 } else {
-                    // If we're in vanilla, set the flag _if_ we were eligble, so that anchor can send the reward in
-                    // co-op
+                    // If we're in vanilla, set the flag _if_ we were eligble, so that a co-op mode can send the
+                    // reward (ZMP: Anchor removed, D-263)
                     if (*should) {
                         Flags_SetRandomizerInf(flag);
                         // If we're in vanilla and skipping the cutscene, fill health/magic, and prevent the cutscene

@@ -16,7 +16,6 @@
 #include "soh/ShipInit.hpp"
 #include "soh/Network/CrowdControl/CrowdControl.h"
 #include "soh/Network/Sail/Sail.h"
-#include "soh/Network/Anchor/Anchor.h"
 #include "soh/Zmp/ZmpLog.h"
 
 namespace Zmp::CVarProfile {
@@ -274,9 +273,6 @@ void DisableRemotes() {
     }
     if (Sail::Instance != nullptr) {
         Sail::Instance->Disable();
-    }
-    if (Anchor::Instance != nullptr) {
-        Anchor::Instance->Disable();
     }
 }
 
