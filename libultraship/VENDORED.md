@@ -48,6 +48,10 @@ somebody else's repository still being there, and its fixes to this library live
      and the harness takes its screenshots from the frame itself instead of asking the desktop for the window (D-102).
      Nothing changes for a game that does not set the hook. Tests:
      `test_f5_whoever_enters_catches_up_with_an_accelerated_group`, `test_f0_screenshot_is_the_frame_whatever_the_window`.
+4. **A crash hook** (`docs/DECISIONES.md` D-247). `src/ship/debug/CrashHandler.cpp`: `gShipCrashHook`, a function the
+   crash handler calls after it has written the crash report (Windows `seh_filter`, POSIX `ErrorHandler`), null unless
+   the game sets it. ZMP sets it to send the unsent part of the logs to a server that collects them (only when that
+   server announced log collection; see `docs-zmp/en/09-player-logs.md`). Nothing changes when it is null.
 
 Not changed, and known: `ArchiveManager::AddArchive`, `RemoveArchive` and `SetArchives` rewrite the file table with no
 lock while other threads may be reading it. They run at start and when the player changes mods from the menu.

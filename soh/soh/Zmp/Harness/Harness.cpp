@@ -33,6 +33,7 @@
 #include "soh/Zmp/Zmp.h"
 #include "soh/Zmp/ZmpLog.h"
 #include "soh/Zmp/Net/ZmpClient.h"
+#include "soh/Zmp/Net/LogShip.h"
 #include "soh/Zmp/Sim/CVarProfile.h"
 #include "soh/Zmp/Sim/Session.h"
 #include "soh/Zmp/Sim/ZmpPlayers.h"
@@ -2183,6 +2184,11 @@ void Dispatch(const RequestPtr& req) {
         req->Reply({ { "ok", true } });
     } else if (name == "net.status") {
         req->Reply(NetStatusJson());
+    } else if (name == "net.logship") {
+        // D-247: what the log uploader did (run, uploads, bytes, the pieces of log it follows)
+        json st = Zmp::LogShip::Status();
+        st["ok"] = true;
+        req->Reply(st);
     } else if (name == "net.connect") {
         std::string host = cmd.value("host", std::string(CVarGetString("gZmp.Server.Host", "127.0.0.1")));
         uint16_t port = (uint16_t)cmd.value("port", CVarGetInteger("gZmp.Server.Port", 47100));

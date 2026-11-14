@@ -44,6 +44,7 @@ void BossGanon2_DrawEffects(PlayState* play);
 void BossGanon2_GenShadowTexture(void* shadowTexture, BossGanon2* this, PlayState* play);
 void BossGanon2_DrawShadowTexture(void* shadowTexture, BossGanon2* this, PlayState* play);
 static Player* BossGanon2_ZmpFinalBlow(BossGanon2* this, PlayState* play, Player* player); // ZMP (G6)
+static void BossGanon2_ZmpSwordBack(BossGanon2* this, PlayState* play);                    // ZMP (D-248)
 
 const ActorInit Boss_Ganon2_InitVars = {
     ACTOR_BOSS_GANON2,
@@ -824,6 +825,7 @@ void func_808FD5F4(BossGanon2* this, PlayState* play) {
                 Sfx_PlaySfxCentered(NA_SE_IT_SWORD_SWING);
             }
             if (this->csTimer == 25) {
+                this->zmpSwordLostSlot = Zmp_SlotOfPlayer(GET_PLAYER(play)) + 1; // ZMP (D-248): whose sword flies
                 Player_SetCsActionWithHaltedActors(play, &this->actor, 0x57);
                 this->csState = 25;
                 this->csTimer = 0;
@@ -1419,7 +1421,10 @@ void func_80900890(BossGanon2* this, PlayState* play) {
             break;
         case 10:
             if (this->zmpSwordSlot != 0) { // ZMP (G5, D-167): the cutscene is about the Link that took the sword
-                Player* taker = Zmp_HeldPlayer(play, this->zmpSwordSlot - 1);
+                Player* taker;
+
+                BossGanon2_ZmpSwordBack(this, play); // ZMP (D-248)
+                taker = Zmp_HeldPlayer(play, this->zmpSwordSlot - 1);
 
                 if (taker != NULL) {
                     player = taker;
@@ -2946,6 +2951,30 @@ static s32 BossGanon2_ZmpSwordTaken(BossGanon2* this, PlayState* play, Player* p
         }
     }
     return 0;
+}
+
+// ZMP (D-248: any player can pick up the Master Sword): the transformation knocks the sword out of
+// the hands of the Link of its cutscene (it is deleted from that Link's equipment, z_player.c func_80852648) and the
+// original gives it back to whoever picks it up. When another Link picks it up, that Link raises it in the cutscene and
+// the Link who lost it gets its sword back too (owned, on B, not swordless): otherwise it would fight on, and finish
+// the game, without it. A Link that has left the group gets nothing here (its block is not in this game any more).
+static void BossGanon2_ZmpSwordBack(BossGanon2* this, PlayState* play) {
+    s32 back = Zmp_SlotOfPlayer(GET_PLAYER(play));
+    s32 lost = this->zmpSwordLostSlot - 1;
+    Player* loser;
+
+    if (!Zmp_MultiActive() || (lost < 0) || (lost == this->zmpSwordSlot - 1) || (back < 0) ||
+        Zmp_TestMutant("espada_solo_para_quien_la_recoge")) { // (mutant: the loser stays without its sword)
+        return;
+    }
+    loser = Zmp_HeldPlayer(play, lost);
+    if (loser != NULL) {
+        Item_Give(play, ITEM_SWORD_MASTER);
+        Flags_UnsetInfTable(INFTABLE_SWORDLESS);
+        Player_SetEquipmentData(play, loser);
+    }
+    this->zmpSwordLostSlot = 0;
+    Zmp_SetContext(play, back);
 }
 
 // ZMP (G6, D-167): the final blow was looked for only in "the player" of Ganon's update (the Link nearest to his body):

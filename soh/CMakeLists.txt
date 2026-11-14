@@ -233,6 +233,17 @@ set(ALL_FILES
 ################################################################################
 add_executable(${PROJECT_NAME} ${ALL_FILES})
 
+# ZMP (D-247): the log upload packs its bodies with zlib (torch brings it) when the build has it; else they go unpacked.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND TARGET zlibstatic)
+    include(FetchContent)
+    FetchContent_GetProperties(zlib)
+    if(zlib_SOURCE_DIR)
+        set_source_files_properties(soh/Zmp/Net/LogShip.cpp PROPERTIES COMPILE_DEFINITIONS ZMP_HAVE_ZLIB=1
+            INCLUDE_DIRECTORIES "${zlib_SOURCE_DIR};${zlib_BINARY_DIR}")
+        target_link_libraries(${PROJECT_NAME} PRIVATE zlibstatic)
+    endif()
+endif()
+
 # ZMP: game memory stores pointers to functions and constant data of the executable (actor update
 # functions, asset names). Phases 1 to 5 linked with a fixed image base (/DYNAMICBASE:NO) so that a save
 # state made by one process was valid in another. Since phase 5b the save state relocates those pointers

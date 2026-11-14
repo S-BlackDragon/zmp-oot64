@@ -105,9 +105,10 @@ typedef struct BossGanon2 {
     /* 0x0444 */ ColliderJntSph unk_444;
     /* 0x0464 */ ColliderJntSphElement unk_464[16];
     /* 0x0864 */ ColliderJntSphElement unk_864[2];
-    s8 zmpSwordSlot;  // ZMP (G5, D-167): 1 + the slot of the Link that picked Zelda's sword up (0 nobody yet)
-    s8 zmpFinishSlot; // ZMP (f6_ganon.py): 1 + the slot the harness says strikes the final blow (0 none)
-} BossGanon2;         // size = 0x08E4 (+ ZMP)
+    s8 zmpSwordSlot;     // ZMP (G5, D-167): 1 + the slot of the Link that picked Zelda's sword up (0 nobody yet)
+    s8 zmpFinishSlot;    // ZMP (f6_ganon.py): 1 + the slot the harness says strikes the final blow (0 none)
+    s8 zmpSwordLostSlot; // ZMP (D-248): 1 + the slot of the Link whose sword the transformation knocked away (0 none)
+} BossGanon2;            // size = 0x08E4 (+ ZMP)
 
 // ZMP (f6_ganon.py): harness events and what the harness reads (z_boss_ganon2.c).
 s32 BossGanon2_ZmpStage(struct PlayState* play, s32 what, s32 slot);

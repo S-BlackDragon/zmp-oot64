@@ -18,6 +18,7 @@
 
 #include "ZmpProtocol.h"
 #include "Lockstep.h"
+#include "LogShip.h"
 #include "soh/Zmp/Sim/CVarProfile.h"
 #include "soh/Zmp/State/ResourceSlots.h"
 #include "soh/Zmp/ZmpCVars.h"
@@ -236,6 +237,7 @@ void Client::Disconnect() {
     if (sWeb.welcomed) {
         sWeb.welcomed = false;
         Lockstep::OnDisconnected();
+        LogShip::OnSessionEnd();
     }
 #else
     if (mThread.joinable()) {
@@ -357,6 +359,8 @@ bool Client::HandleMessage(nlohmann::json& msg, const std::string& room, bool& w
         Log("net: WELCOME player_id=" + std::to_string(mStatus.playerId) + " room=" + mStatus.room +
             (msg.value("rejoin", false) ? " (rejoin)" : ""));
         welcomed = true;
+        LogShip::OnWelcome(msg.value("log_collect", false), msg.value("log_token", std::string()), mStatus.host,
+                           mStatus.port);
         Lockstep::OnConnected(msg.value("rejoin", false), msg.value("leave_shared", false));
     } else if (t == "REJECT") {
         std::string reason = msg.value("reason", std::string("rejected"));
@@ -500,6 +504,7 @@ void Client::Run(std::string host, uint16_t port, std::string room, std::string 
         }
         if (welcomed) {
             Lockstep::OnDisconnected();
+            LogShip::OnSessionEnd();
         }
         SDLNet_TCP_DelSocket(set, sock);
         SDLNet_FreeSocketSet(set);
@@ -654,6 +659,7 @@ void Client::WebClosed(bool error) {
     if (sWeb.welcomed) {
         sWeb.welcomed = false;
         Lockstep::OnDisconnected();
+        LogShip::OnSessionEnd();
     }
     if (mStop) {
         SetState(NetState::Disconnected);

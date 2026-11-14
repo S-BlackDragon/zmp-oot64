@@ -197,6 +197,8 @@
 //   cura_solo_contexto     the refills of Ganondorf's intro and of the escape go to the player of context only (G3,
 //                          D-166)
 //   espada_al_mas_cercano  only the Link nearest to Ganon can pick Zelda's sword up (G5, D-167)
+//   espada_solo_para_quien_la_recoge  another Link picks the Master Sword up and the Link it was knocked from stays
+//                          without it (D-248)
 //   golpe_final_al_mas_cercano  only the Link nearest to Ganon's body can deal the final blow (G6, D-167)
 //   anillo_al_mas_cercano  Ganon's ring of fire burns and throws back only the Link nearest to Ganon (G6, D-167)
 //   hablar_con_camara_del_ancla  an NPC's talk offer asks "on screen?" with the anchor's picture (D-206): far from
