@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/S-BlackDragon/zmp-oot64/server/internal/protocol"
-	"github.com/S-BlackDragon/zmp-oot64/server/internal/zmplogs"
 )
 
 // MaxPlayersPerRoom matches ZMP_MAX_PLAYERS (and the number of group slots).
@@ -96,13 +95,6 @@ type Config struct {
 	// GET on the port serves its files, so players can open http://<server>:<port>/ and play in the browser against
 	// this same server. "" (the default) serves only the health line.
 	WebDir string
-	// LogDir is the store of the players' logs (POST /zmp/logs, D-247); "" keeps log collection off and WELCOME does
-	// not announce it. LogMaxTotal caps the store (oldest files first; default 2 GiB), LogMaxUpload one upload
-	// (default 8 MiB) and LogMaxPerDay what one player name may upload in a UTC day (default 128 MiB).
-	LogDir       string
-	LogMaxTotal  int64
-	LogMaxUpload int64
-	LogMaxPerDay int64
 }
 
 func (c *Config) setDefaults() {
@@ -151,8 +143,6 @@ type Server struct {
 
 	pendingSaves []*saveJob // canonical games to write (outside the lock)
 
-	logs *zmplogs.Store // the players' logs (/zmp/logs), off when Config.LogDir is empty
-
 	keptBlobs [][]byte // (only with Config.TestKeepBlobs)
 }
 
@@ -164,7 +154,6 @@ type Room struct {
 	clients        map[uint32]*client
 	groups         map[uint32]*group
 	lastPlayerList time.Time
-	session        string // when the room was made (zmplogs.SessionID): the folder of its logs
 
 	// Protocol 3: the canonical shared game (nil until the first group is founded) and the world clock.
 	canon     *canonical
@@ -298,13 +287,7 @@ func (s *Server) writer(c *client) {
 // New creates a server. Call Serve or ListenAndServe.
 func New(cfg Config) *Server {
 	cfg.setDefaults()
-	logs := zmplogs.New(zmplogs.Config{Dir: cfg.LogDir, MaxTotal: cfg.LogMaxTotal, MaxUpload: cfg.LogMaxUpload,
-		MaxPerDay: cfg.LogMaxPerDay, Logger: cfg.Logger})
-	logger := cfg.Logger
-	if logs.Enabled() { // (the server's own lines go to the store too)
-		logger = log.New(io.MultiWriter(cfg.Logger.Writer(), logs.ServerLog()), cfg.Logger.Prefix(), cfg.Logger.Flags())
-	}
-	return &Server{cfg: cfg, log: logger, start: time.Now(), rooms: map[string]*Room{}, logs: logs,
+	return &Server{cfg: cfg, log: cfg.Logger, start: time.Now(), rooms: map[string]*Room{},
 		conns: map[net.Conn]struct{}{}, stop: make(chan struct{})}
 }
 
@@ -423,7 +406,6 @@ func (s *Server) Close() {
 	s.mu.Unlock()
 	s.stopOnce.Do(func() { close(s.stop) })
 	s.wg.Wait()
-	s.logs.Close()
 }
 
 // RoomSnapshot is used by tests and logs.
@@ -527,7 +509,7 @@ func (s *Server) playerListLocked(r *Room) {
 // newRoomLocked creates a room for the first client's handshake; a protocol 3 room gets its canonical game from disk.
 func (s *Server) newRoomLocked(hello protocol.Hello) *Room {
 	room := &Room{Name: hello.Room, ref: hello, proto: hello.Proto, clients: map[uint32]*client{},
-		groups: map[uint32]*group{}, session: zmplogs.SessionID(time.Now())}
+		groups: map[uint32]*group{}}
 	if room.sceneGroups() {
 		if c := s.loadCanonical(room.Name); c != nil {
 			room.canon = c
@@ -687,10 +669,7 @@ func (s *Server) handle(conn transport) {
 	s.wg.Add(1)
 	go s.writer(c)
 	s.sendLocked(c, protocol.Welcome{T: "WELCOME", PlayerID: c.id, Room: room.Name, Players: room.playersLocked(),
-		Proto: room.proto, Rejoin: rejoin, LeaveShared: true, LogCollect: s.logs.Enabled(),
-		LogToken: s.logs.Issue(room.Name, room.session, c.id, c.name)})
-	s.logs.Event(room.Name, room.session, fmt.Sprintf("joined id=%d name=%q from %s build=%s rejoin=%v", c.id, c.name,
-		remote, short(hello.BuildHash), rejoin))
+		Proto: room.proto, Rejoin: rejoin, LeaveShared: true})
 	s.playerListLocked(room)
 	s.mu.Unlock()
 	s.log.Printf("%s: joined room id=%d name=%q room=%q build=%s rejoin=%v", remote, c.id, c.name, room.Name,
@@ -817,7 +796,6 @@ func (s *Server) removeClientLocked(c *client, why string) {
 	room := c.room
 	delete(room.clients, c.id)
 	s.log.Printf("left room id=%d name=%q room=%q (%s)", c.id, c.name, room.Name, why)
-	s.logs.Event(room.Name, room.session, fmt.Sprintf("left id=%d name=%q (%s)", c.id, c.name, why))
 	if c.slot != nil && c.slot.client == c {
 		s.detachSlotLocked(c.slot)
 	}

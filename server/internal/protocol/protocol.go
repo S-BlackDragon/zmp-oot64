@@ -79,10 +79,6 @@ type Welcome struct {
 	// LeaveShared: this server takes the shared changes sent with LEAVE_GROUP (D-115). A client only sends them, and
 	// only then stops counting them as its own, when the server says so.
 	LeaveShared bool `msgpack:"leave_shared"`
-	// LogCollect: this server keeps its players' logs (D-247); LogToken is what this connection's uploads carry
-	// (POST /zmp/logs on the same port). A client that does not see log_collect never uploads anything.
-	LogCollect bool   `msgpack:"log_collect,omitempty"`
-	LogToken   string `msgpack:"log_token,omitempty"`
 }
 
 type Reject struct {

@@ -4,7 +4,7 @@
 #   docker compose -f server/deploy/docker-compose.yml up -d
 #
 # The image is tiny (one static binary on an empty base), runs as a non-root user, and writes only to /data
-# (the rooms' canonical saves) and, if ZMP_LOG_DIR names a mounted folder, to that folder (the players' logs).
+# (the rooms' canonical saves).
 FROM golang:1.26 AS build
 WORKDIR /src
 COPY go.mod go.sum ./

@@ -16,7 +16,6 @@ import (
 
 	"github.com/S-BlackDragon/zmp-oot64/server/internal/protocol"
 	"github.com/S-BlackDragon/zmp-oot64/server/internal/server"
-	"github.com/S-BlackDragon/zmp-oot64/server/internal/zmplogs"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -34,10 +33,6 @@ func main() {
 	memEvery := flag.Duration("mem-interval", 0, "how often the memory of the process is written to the log (0: every 60 s)")
 	memCollect := flag.Bool("mem-collect", false, "test setting: collect garbage before each memory line, so it says what the server holds")
 	keepBlobs := flag.Bool("test-keep-blobs", false, "test setting: keep every relayed state for ever (a leak on purpose, for the memory check)")
-	logDir := flag.String("log-dir", "", "store of the players' logs, POST /zmp/logs on the same port (empty: ZMP_LOG_DIR, else log collection is off)")
-	logMaxTotal := flag.String("log-max-total", "", "cap of the log store, oldest files removed first: bytes or 512M, 2G (empty: ZMP_LOG_MAX_TOTAL, else 2G)")
-	logMaxUpload := flag.String("log-max-upload", "", "largest log upload (empty: ZMP_LOG_MAX_UPLOAD, else 8M)")
-	logMaxPerDay := flag.String("log-max-per-day", "", "what one player name may upload in a UTC day (empty: ZMP_LOG_MAX_PER_DAY, else 128M)")
 	flag.Parse()
 
 	if *healthcheck {
@@ -59,27 +54,9 @@ func main() {
 	}
 
 	logger := log.New(os.Stdout, "", log.LstdFlags|log.Lmicroseconds)
-	setting := func(flagValue, env string) string {
-		if flagValue != "" {
-			return flagValue
-		}
-		return strings.TrimSpace(os.Getenv(env))
-	}
-	size := func(flagValue, env string) int64 {
-		text := setting(flagValue, env)
-		if text == "" {
-			return 0
-		}
-		n, err := zmplogs.ParseSize(text)
-		if err != nil {
-			logger.Fatalf("%s: %v", env, err)
-		}
-		return n
-	}
 	srv := server.New(server.Config{Listen: *listen, DataDir: *dataDir, Logger: logger, BuildVersion: version,
 		SlowFillAfter: *slowFill, MemInterval: *memEvery, MemCollect: *memCollect, TestKeepBlobs: *keepBlobs,
-		WebDir: *webDir, LogDir: setting(*logDir, "ZMP_LOG_DIR"), LogMaxTotal: size(*logMaxTotal, "ZMP_LOG_MAX_TOTAL"),
-		LogMaxUpload: size(*logMaxUpload, "ZMP_LOG_MAX_UPLOAD"), LogMaxPerDay: size(*logMaxPerDay, "ZMP_LOG_MAX_PER_DAY")})
+		WebDir: *webDir})
 	if *webDir != "" {
 		if st, err := os.Stat(filepath.Join(*webDir, "index.html")); err != nil || st.IsDir() {
 			logger.Fatalf("-web %s: no index.html there (use the folder of the browser build)", *webDir)
