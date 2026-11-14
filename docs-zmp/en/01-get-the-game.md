@@ -9,7 +9,7 @@ share a room (they are different builds), but one server can hold desktop rooms 
 
 ## Option A: download a release (easiest)
 
-1. Open the repository's **Releases** page on GitHub and download, from the same release:
+1. Open the repository's [latest release](https://github.com/S-BlackDragon/zmp-oot64/releases/latest) on GitHub and download, from the same release:
    - `ZMP-<version>-windows.zip`: the desktop game;
    - `zmp-server-<version>-windows-amd64.exe` (or the Linux build): the room server, only for whoever hosts;
    - `ZMP-<version>-web.zip`: the browser version, only if you want the [browser mode](07-browser-mode.md).

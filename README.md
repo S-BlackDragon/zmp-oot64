@@ -33,7 +33,7 @@ Consequences you should know:
 
 ## Play in 5 steps
 
-1. **Download** `ZMP-<version>-windows.zip` from [Releases](../../releases) and unzip it into a normal folder.
+1. **Download** `ZMP-<version>-windows.zip` from [Releases](../../releases/latest) and unzip it into a normal folder.
 2. **Open `soh.exe`** and, the first time, choose your Ocarina of Time ROM (`.z64`/`.n64`/`.v64`); the game builds
    its data from it in a minute or two. [Details](docs-zmp/en/02-your-rom.md)
 3. **Someone hosts**: runs `zmp-server` from the same release (double-click on Windows). [Hosting guides](#host-a-game)

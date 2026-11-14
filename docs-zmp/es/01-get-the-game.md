@@ -10,7 +10,7 @@ de escritorio y salas de navegador a la vez.
 
 ## Opción A: descargar una versión (lo más fácil)
 
-1. Abre la página **Releases** del repositorio en GitHub y descarga, de la misma versión:
+1. Abre la [última versión](https://github.com/S-BlackDragon/zmp-oot64/releases/latest) del repositorio en GitHub y descarga, de la misma versión:
    - `ZMP-<version>-windows.zip`: el juego de escritorio;
    - `zmp-server-<version>-windows-amd64.exe` (o la compilación para Linux): el servidor de salas, solo para quien
      hospede;
