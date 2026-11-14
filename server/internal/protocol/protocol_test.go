@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"reflect"
 	"testing"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -25,7 +26,7 @@ func TestFrameRoundTrip(t *testing.T) {
 		t.Fatalf("type %q %v", typ, err)
 	}
 	var out Hello
-	if err := Decode(body, &out); err != nil || out != in {
+	if err := Decode(body, &out); err != nil || !reflect.DeepEqual(out, in) {
 		t.Fatalf("round trip mismatch %+v %v", out, err)
 	}
 }

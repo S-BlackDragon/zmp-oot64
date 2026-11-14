@@ -48,11 +48,14 @@ type group struct {
 	resyncs       int
 }
 
-// slot is one Link of the simulation; it survives its connection (rejoin by name).
+// slot is one Link of the simulation; it survives its connection (rejoin by identity: the player_key of protocol 5,
+// else the name).
 type slot struct {
 	index       int
 	g           *group
 	name        string
+	ident       string  // client.ident of its player
+	color       int     // the player's colour (protocol 5), -1 none
 	client      *client // nil while disconnected
 	lastID      uint32  // id of the last connection, for PLAYER_LIST
 	seq         uint64  // entry order, for leader election
@@ -83,6 +86,15 @@ type blobReq struct {
 func (g *group) slotByName(name string) *slot {
 	for _, sl := range g.slots {
 		if sl != nil && sl.name == name {
+			return sl
+		}
+	}
+	return nil
+}
+
+func (g *group) slotByIdent(ident string) *slot {
+	for _, sl := range g.slots {
+		if sl != nil && sl.ident == ident {
 			return sl
 		}
 	}
@@ -214,6 +226,16 @@ func (r *Room) slotByName(name string) *slot {
 	return nil
 }
 
+// slotByIdent finds the slot an identity owns in any group of the room.
+func (r *Room) slotByIdent(ident string) *slot {
+	for _, g := range r.sortedGroups() {
+		if sl := g.slotByIdent(ident); sl != nil {
+			return sl
+		}
+	}
+	return nil
+}
+
 // targetGroup is the group a JOIN_GROUP enters (nil: found one or wait). Protocol 2: the room's only group.
 // Protocol 3: the group of the player it follows, else the group of its scene, else (a client without a game that
 // names no scene) the group with most players.
@@ -265,7 +287,7 @@ func (s *Server) joinGroupLocked(c *client, m protocol.JoinGroup) {
 		c.lastLayout = m.SharedLayout
 	}
 
-	sl := room.slotByName(c.name)
+	sl := room.slotByIdent(c.ident)
 	var g *group
 	if sl != nil {
 		g = sl.g // rejoin: the group that kept this player's Link
@@ -328,8 +350,9 @@ func (s *Server) joinGroupLocked(c *client, m protocol.JoinGroup) {
 		if old := sl.client; old != nil && old != c {
 			old.slot = nil
 		}
+		sl.name, sl.color = c.name, c.color // (a player who comes back with a new name or colour)
 	} else {
-		sl = &slot{index: idx, g: g, name: c.name, seq: g.joinSeq}
+		sl = &slot{index: idx, g: g, name: c.name, ident: c.ident, color: c.color, seq: g.joinSeq}
 		g.joinSeq++
 		g.slots[idx] = sl
 		spawn := m.Spawn
@@ -386,7 +409,7 @@ func (s *Server) foundGroupLocked(c *client, m protocol.JoinGroup) {
 		lastShared: -1, lastClock: -1, nextDelayCalc: now.Add(s.cfg.DelayInterval),
 		nextStats: now.Add(s.cfg.StatsInterval)}
 	g.solo = m.Solo && room.sceneGroups()
-	sl := &slot{index: 0, g: g, name: c.name, client: c, lastID: c.id, seq: 0, resumeAt: -1, activeSince: now}
+	sl := &slot{index: 0, g: g, name: c.name, ident: c.ident, color: c.color, client: c, lastID: c.id, seq: 0, resumeAt: -1, activeSince: now}
 	g.slots[0] = sl
 	c.slot = sl
 	room.groups[g.id] = g
@@ -430,7 +453,7 @@ func (s *Server) serveWaitingLocked(room *Room) {
 		}
 		m := w.waitMsg
 		m.InPlay = false // served only into an existing group (it founds by itself when it can)
-		if room.slotByName(w.name) != nil || room.targetGroup(m) != nil {
+		if room.slotByIdent(w.ident) != nil || room.targetGroup(m) != nil {
 			s.joinGroupLocked(w, m)
 		}
 	}

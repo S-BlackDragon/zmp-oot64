@@ -1,0 +1,31 @@
+{
+  "comment": "ZMP invite code vectors, version 1 (the protocol 5 design notes section 7). port 0 in 'fields' means the default 47100 was not written.",
+  "valid": [
+    {"fields": {"addresses": ["203.0.113.7", "192.168.1.20"], "port": 47100, "room": "bosque", "password": "saria", "hint": ""},
+     "hex": "01020204cb00710704c0a8011406626f7371756505736172696115ee8c49",
+     "text": "ZMP-0410-416B-01RG-E160-N00H-81K2-DXSQ-2XB5-0NSP-2WK9-C4AY-X329",
+     "link": "zmp://join/0410416B01RGE160N00H81K2DXSQ2XB50NSP2WK9C4AYX329"},
+    {"fields": {"addresses": ["203.0.113.7"], "port": 47200, "room": "templo", "password": "", "hint": "el nombre del caballo"},
+     "hex": "0105b8600104cb0071070674656d706c6f15656c206e6f6d6272652064656c20636162616c6c6f0342ed05",
+     "text": "ZMP-042V-GR01-0K5G-0W87-0ST6-AVBG-DHQH-ASBC-41Q6-YVB2-E9JJ-0S35-DGG6-6RB2-C5P6-RVR3-8BPG-A",
+     "link": "zmp://join/042VGR010K5G0W870ST6AVBGDHQHASBC41Q6YVB2E9JJ0S35DGG66RB2C5P6RVR38BPGA"},
+    {"fields": {"addresses": ["2001:db8::7", "juego.example.org", "wss://juego.example.org/zmp"], "port": 47100, "room": "Sala 1", "password": "", "hint": ""},
+     "hex": "0100030620010db800000000000000000000000701116a7565676f2e6578616d706c652e6f7267021b7773733a2f2f6a7565676f2e6578616d706c652e6f72672f7a6d700653616c61203198b2f6c0",
+     "text": "ZMP-0400-61H0-046V-G000-0000-0000-0000-0007-048P-MXB5-CXQJ-WSBR-C5PQ-0V35-5SQQ-4SR2-3DVQ-6WST-5WQP-MXB5-CXQJ-WSBR-C5PQ-0V35-5SQQ-4SSF-F9PQ-01JK-C5P6-281H-K2SF-DG0",
+     "link": "zmp://join/040061H0046VG0000000000000000007048PMXB5CXQJWSBRC5PQ0V355SQQ4SR23DVQ6WST5WQPMXB5CXQJWSBRC5PQ0V355SQQ4SSFF9PQ01JKC5P6281HK2SFDG0"}
+  ],
+  "same_as_first": [
+    "zmp-0410-416b-01rg-e160-n00h-81k2-dxsq-2xb5-0nsp-2wk9-c4ay-x329",
+    "  ZMP 0410 416B 01RG E160 N00H 81K2 DXSQ 2XB5 0NSP 2WK9 C4AY X329\r\n",
+    "0410416B01RGE16ON00H81K2DXSQ2XB5ONSP2WK9C4AYX329",
+    "zmp://0410416B01RGE160N00H81K2DXSQ2XB50NSP2WK9C4AYX329",
+    "ZMP-0410-416B-01RG-E160-N00H-81K2-DXSQ-2XB5-0NSP-2WK9-C4AY-X329."
+  ],
+  "invalid": [
+    {"text": "", "error": "empty"},
+    {"text": "ZMP-0410-416B-01RG-E160-N00H-81K2-DXSQ-2XB5-0NSP-2WK9-C4AY-X328", "error": "checksum"},
+    {"text": "ZMP-0410-416B-01RG-E160-N00H-81K2-DXSQ-2XB5-0NSP-2WK9-C4AY-X32", "error": "length"},
+    {"text": "ZMP-0410-416B-01RG-E160-N00H-81K2-DXSQ-2XB5-0NSP-2WK9-C4AY-X32U", "error": "character"},
+    {"text": "ZMP-0810-416B-01RG-E160-N00H-81K2-DXSQ-2XB5-0NSP-2WK9-C4AY-X329", "error": "version"}
+  ]
+}

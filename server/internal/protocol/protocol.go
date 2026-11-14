@@ -13,8 +13,10 @@ import (
 
 // Version is incremented on any incompatible change. The server accepts MinVersion..Version; a room keeps the
 // version of its first client. Version 2 adds lockstep groups (one per room); version 3 (phase 5) one group per scene,
-// the canonical shared game and the world clock (docs/PROTOCOLO.md).
-const Version = 4
+// the canonical shared game and the world clock (docs/PROTOCOLO.md); version 4 (phase 5b) nobody waits for anybody;
+// version 5 (public product, the protocol 5 design notes) room and server passwords by challenge and response, the
+// player_key identity, rename and colour in session, the engine and the room list. The simulation of 5 is that of 4.
+const Version = 5
 
 // MinVersion is the oldest protocol still served (demos 0.2.x to 0.4.0 speak 2).
 const MinVersion = 2
@@ -45,6 +47,33 @@ type Hello struct {
 	// RomName: the ROM version the assets were made from, by name ("PAL GameCube Debug", "NTSC N64 1.2"...).
 	// Only for the reject message (phase 5b); the check is on the content hashes. Optional.
 	RomName string `msgpack:"rom_name,omitempty"`
+
+	// Protocol 5 (protocol 5 notes 2.1). AuthNonce: 16 random bytes of this connection (required). HasPassword: the
+	// player typed a room password. PlayerKey: 32 lowercase hex characters, the player's stable identity (optional:
+	// without it the identity is the name). Color: 0xRRGGBB, -1 or absent for the slot's own. Engine: "native" or
+	// "wasm" ("" unchecked).
+	AuthNonce   []byte `msgpack:"auth_nonce,omitempty"`
+	HasPassword bool   `msgpack:"has_password,omitempty"`
+	PlayerKey   string `msgpack:"player_key,omitempty"`
+	Color       *int   `msgpack:"color,omitempty"`
+	Engine      string `msgpack:"engine,omitempty"`
+}
+
+// Challenge (S->C, protocol 5): the HELLO needs a proof of a key (server, room) or the key of a new room (create).
+type Challenge struct {
+	T      string `msgpack:"t"`
+	Nonce  []byte `msgpack:"nonce"`
+	Server bool   `msgpack:"server"`
+	Room   bool   `msgpack:"room"`
+	Create bool   `msgpack:"create"`
+}
+
+// Auth (C->S, protocol 5) answers a CHALLENGE.
+type Auth struct {
+	T           string `msgpack:"t"`
+	ServerProof []byte `msgpack:"server_proof,omitempty"`
+	RoomProof   []byte `msgpack:"room_proof,omitempty"`
+	RoomKey     []byte `msgpack:"room_key,omitempty"`
 }
 
 // PlayerInfo is one entry of WELCOME.players and PLAYER_LIST.players.
@@ -58,6 +87,8 @@ type PlayerInfo struct {
 	// Protocol 3: scene of the player's group (or the scene it last reported, -1 unknown) and its group id (0: none).
 	Scene int    `msgpack:"scene"`
 	Group uint32 `msgpack:"group"`
+	// Protocol 5: the player's chosen colour (0xRRGGBB, -1 the slot's own); absent for older rooms.
+	Color *int `msgpack:"color,omitempty"`
 }
 
 // Player states reported in PlayerInfo.State.
@@ -79,12 +110,21 @@ type Welcome struct {
 	// LeaveShared: this server takes the shared changes sent with LEAVE_GROUP (D-115). A client only sends them, and
 	// only then stops counting them as its own, when the server says so.
 	LeaveShared bool `msgpack:"leave_shared"`
+	// Protocol 5 (protocol 5 notes 2.5): absent for older rooms.
+	RoomPassword  bool   `msgpack:"room_password,omitempty"`
+	RoomOwner     bool   `msgpack:"room_owner,omitempty"`
+	RoomConfirm   []byte `msgpack:"room_confirm,omitempty"`
+	ServerConfirm []byte `msgpack:"server_confirm,omitempty"`
+	ServerName    string `msgpack:"server_name,omitempty"`
+	MaxPlayers    int    `msgpack:"max_players,omitempty"`
 }
 
+// Reject closes a handshake. Args (protocol 5 only) carry the values a client puts in its own translated text.
 type Reject struct {
-	T      string `msgpack:"t"`
-	Reason string `msgpack:"reason"`
-	Detail string `msgpack:"detail"`
+	T      string            `msgpack:"t"`
+	Reason string            `msgpack:"reason"`
+	Detail string            `msgpack:"detail"`
+	Args   map[string]string `msgpack:"args,omitempty"`
 }
 
 type PlayerList struct {
@@ -92,6 +132,62 @@ type PlayerList struct {
 	Players   []PlayerInfo `msgpack:"players"`
 	Delay     int          `msgpack:"delay"`
 	GroupTick int64        `msgpack:"group_tick"` // last emitted tick, -1 if none
+	// Protocol 5: whether the room has a password now (absent for older rooms).
+	RoomPassword *bool `msgpack:"room_password,omitempty"`
+}
+
+// Rename (C->S, protocol 5) asks for a new name; RenameResult answers it (reason bad_name or name_taken).
+type Rename struct {
+	T    string `msgpack:"t"`
+	Name string `msgpack:"name"`
+}
+
+type RenameResult struct {
+	T      string `msgpack:"t"`
+	OK     bool   `msgpack:"ok"`
+	Name   string `msgpack:"name"`
+	Reason string `msgpack:"reason"`
+}
+
+// SetColor (C->S, protocol 5): 0xRRGGBB or -1.
+type SetColor struct {
+	T     string `msgpack:"t"`
+	Color int    `msgpack:"color"`
+}
+
+// RoomSetKey (C->S, protocol 5): the room's creator changes its key (empty: no password).
+type RoomSetKey struct {
+	T       string `msgpack:"t"`
+	RoomKey []byte `msgpack:"room_key"`
+}
+
+type RoomSetKeyResult struct {
+	T      string `msgpack:"t"`
+	OK     bool   `msgpack:"ok"`
+	Reason string `msgpack:"reason"`
+}
+
+// RoomListRequest is a first message instead of HELLO (protocol 5); the server answers ROOM_LIST or REJECT
+// rooms_hidden and closes.
+type RoomListRequest struct {
+	T     string `msgpack:"t"`
+	Proto int    `msgpack:"proto"`
+}
+
+type RoomListEntry struct {
+	Name      string `msgpack:"name"`
+	Players   int    `msgpack:"players"`
+	Max       int    `msgpack:"max"`
+	Proto     int    `msgpack:"proto"`
+	Engine    string `msgpack:"engine"`
+	BuildHash string `msgpack:"build_hash"`
+	Password  bool   `msgpack:"password"`
+}
+
+type RoomList struct {
+	T          string          `msgpack:"t"`
+	ServerName string          `msgpack:"server_name"`
+	Rooms      []RoomListEntry `msgpack:"rooms"`
 }
 
 type Ping struct {

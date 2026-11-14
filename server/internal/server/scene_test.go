@@ -531,7 +531,7 @@ func TestProtocolMixRejected(t *testing.T) {
 	if w := decode[protocol.Welcome](t, o.expect(t, "WELCOME")); w.Proto != 2 {
 		t.Fatalf("old room proto %d", w.Proto)
 	}
-	bad := dial(t, addr, protocol.Hello{T: "HELLO", Proto: 5, BuildHash: "b", Name: "D", Room: "x"})
+	bad := dial(t, addr, protocol.Hello{T: "HELLO", Proto: 6, BuildHash: "b", Name: "D", Room: "x"})
 	expectReject(t, bad, "protocol_mismatch")
 }
 

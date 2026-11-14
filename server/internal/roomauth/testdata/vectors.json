@@ -1,0 +1,21 @@
+{
+  "comment": "ZMP protocol 5 key and proof vectors (the protocol 5 design notes section 3). Strings are UTF-8, bytes hex.",
+  "room_keys": [
+    {"room": "bosque", "password": "saria", "key": "800358c00519b509a963d6db818fa55a6886cd97d70b71aa33dbd2d23091a835"},
+    {"room": "bosque", "password": "  saria\r\n", "key": "800358c00519b509a963d6db818fa55a6886cd97d70b71aa33dbd2d23091a835"}
+  ],
+  "server_keys": [
+    {"password": "hyrule", "key": "748c6c75ffd5f000a7f92beb20fc2d7cc4778233fe30995024e319ed559f7335"}
+  ],
+  "proofs": [
+    {"kind": "room", "key": "800358c00519b509a963d6db818fa55a6886cd97d70b71aa33dbd2d23091a835",
+     "server_nonce": "000102030405060708090a0b0c0d0e0f", "client_nonce": "101112131415161718191a1b1c1d1e1f",
+     "room": "bosque", "name": "Saria",
+     "proof": "43847a6801e06bc2443ac34ab0b14b81a41a31f14a51275449dc80e4fef4db60",
+     "confirm": "91728750360ab0902e5c0b0cab562d1262bc48dde71d24af4d1ac96e32cabc20"},
+    {"kind": "server", "key": "748c6c75ffd5f000a7f92beb20fc2d7cc4778233fe30995024e319ed559f7335",
+     "server_nonce": "000102030405060708090a0b0c0d0e0f", "client_nonce": "101112131415161718191a1b1c1d1e1f",
+     "room": "bosque", "name": "Saria",
+     "proof": "839827e5d91e634c2afa3ea90b6c05843fc92ebba5c44bb6cc5f8b043907e8da"}
+  ]
+}

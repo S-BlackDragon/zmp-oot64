@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZMP · servidor</title>
+<style>
+:root { --bg:#f6f5f0; --card:#fff; --ink:#1d2320; --muted:#5d6661; --line:#dcdcd2; --accent:#2f7d4f; --warn:#9a5b00; --bad:#a12d2d; --okbg:#e6f3ea; --warnbg:#fbf0dc; --badbg:#f8e3e3; }
+@media (prefers-color-scheme: dark) { :root { --bg:#151917; --card:#1f2522; --ink:#e7ebe8; --muted:#a3ada7; --line:#36403b; --accent:#59b57c; --warn:#e0a54a; --bad:#e57373; --okbg:#1d3326; --warnbg:#3a2e17; --badbg:#3a1f1f; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width:760px; margin:0 auto; padding:20px 16px 40px; }
+header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+h1 { font-size:20px; margin:0; }
+h2 { font-size:15px; margin:0 0 8px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+.code { font:600 19px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; overflow-wrap:anywhere; padding:10px 12px; border:1px dashed var(--line); border-radius:8px; user-select:all; }
+.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+button, select, input { font:inherit; color:inherit; }
+button { background:var(--accent); color:#fff; border:0; border-radius:7px; padding:7px 13px; cursor:pointer; }
+button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+button.stop { background:var(--bad); }
+input, select { background:var(--bg); border:1px solid var(--line); border-radius:7px; padding:6px 9px; min-width:0; }
+input { flex:1 1 180px; }
+.muted { color:var(--muted); font-size:13px; }
+.reach { border-radius:8px; padding:10px 12px; }
+.reach.ok { background:var(--okbg); } .reach.warn { background:var(--warnbg); } .reach.bad { background:var(--badbg); }
+table { width:100%; border-collapse:collapse; }
+td, th { text-align:left; padding:5px 4px; border-bottom:1px solid var(--line); }
+th { color:var(--muted); font-weight:600; font-size:13px; }
+.dot { display:inline-block; width:11px; height:11px; border-radius:50%; vertical-align:-1px; margin-right:5px; border:1px solid var(--line); }
+#stopped { display:none; text-align:center; padding:40px 10px; }
+.lang { font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 data-t="title">Servidor ZMP</h1>
+    <div><select id="lang" class="lang" aria-label="Idioma / Language"><option value="es">Español</option><option value="en">English</option></select>
+    <button class="stop" id="stop" data-t="stop">Parar</button></div>
+  </header>
+  <div id="stopped"><h2 data-t="stoppedTitle">Servidor parado</h2><p data-t="stoppedText">Ya puedes cerrar esta pestaña.</p></div>
+  <div id="ui">
+  <section>
+    <h2 data-t="invite">Código de invitación</h2>
+    <div class="code" id="code">…</div>
+    <div class="row"><button id="copyCode" data-t="copy">Copiar código</button><button class="ghost" id="copyLink" data-t="copyLink">Copiar enlace</button><span class="muted" id="copied"></span></div>
+    <p class="muted" data-t="inviteHelp">Pásaselo a tus amigos: lo pegan en "Unirse" del juego y entran.</p>
+    <p class="muted"><span data-t="addresses">Direcciones en el código:</span> <span id="addrs"></span></p>
+  </section>
+  <section>
+    <h2 data-t="reach">Desde internet</h2>
+    <div class="reach" id="reach"><b id="reachMsg">…</b><div id="reachAdvice" class="muted" style="margin-top:4px"></div></div>
+  </section>
+  <section>
+    <h2 data-t="roomTitle">Sala y contraseña</h2>
+    <div class="row"><label data-t="room" for="room">Sala</label><input id="room" maxlength="64"><button class="ghost" id="saveRoom" data-t="change">Cambiar</button></div>
+    <div class="row"><label data-t="password" for="pw">Contraseña</label><input id="pw" type="password" maxlength="64" autocomplete="off">
+      <button class="ghost" id="showPw" data-t="show">Ver</button><button class="ghost" id="savePw" data-t="change">Cambiar</button><button class="ghost" id="genPw" data-t="generate">Nueva al azar</button><button class="ghost" id="noPw" data-t="remove">Quitar</button></div>
+    <div class="row"><label data-t="codeHas" for="secret">El código lleva</label>
+      <select id="secret"><option value="password" data-t="optPassword">la contraseña</option><option value="hint" data-t="optHint">solo una pista</option><option value="none" data-t="optNone">nada (la piden al entrar)</option></select>
+      <input id="hint" maxlength="64" data-ph="hintPh" placeholder="pista"><button class="ghost" id="saveSecret" data-t="save">Guardar</button></div>
+    <p class="muted" data-t="secretHelp">Quien tiene el código con la contraseña puede entrar: si vas a publicarlo, elige "solo una pista".</p>
+  </section>
+  <section>
+    <h2><span data-t="players">Jugadores</span> (<span id="nplayers">0</span>/6)</h2>
+    <table><thead><tr><th data-t="name">Nombre</th><th data-t="state">Estado</th><th>ms</th></tr></thead><tbody id="players"></tbody></table>
+    <p class="muted" id="noPlayers" data-t="noPlayers">Todavía no ha entrado nadie.</p>
+  </section>
+  <p class="muted"><span id="version"></span> · <span data-t="logNote">La ventana de la consola es el registro del servidor.</span></p>
+  </div>
+</main>
+<script>
+"use strict";
+const T = {
+  es: { title:"Servidor ZMP", stop:"Parar", stoppedTitle:"Servidor parado", stoppedText:"Ya puedes cerrar esta pestaña.", invite:"Código de invitación", copy:"Copiar código", copyLink:"Copiar enlace", copied:"Copiado", inviteHelp:"Pásaselo a tus amigos: lo pegan en \"Unirse\" del juego y entran.", addresses:"Direcciones en el código:", reach:"Desde internet", roomTitle:"Sala y contraseña", room:"Sala", password:"Contraseña", change:"Cambiar", show:"Ver", hide:"Ocultar", generate:"Nueva al azar", remove:"Quitar", codeHas:"El código lleva", optPassword:"la contraseña", optHint:"solo una pista", optNone:"nada (la piden al entrar)", hintPh:"pista", save:"Guardar", secretHelp:"Quien tiene el código con la contraseña puede entrar: si vas a publicarlo, elige \"solo una pista\".", players:"Jugadores", name:"Nombre", state:"Estado", noPlayers:"Todavía no ha entrado nadie.", logNote:"La ventana de la consola es el registro del servidor.", confirmStop:"¿Parar el servidor? Los jugadores se desconectan.", noPassword:"sin contraseña", states:{lobby:"en el menú", joining:"entrando", playing:"jugando", waiting:"esperando", disconnected:"desconectado"}, error:"Error: " },
+  en: { title:"ZMP server", stop:"Stop", stoppedTitle:"Server stopped", stoppedText:"You can close this tab now.", invite:"Invite code", copy:"Copy code", copyLink:"Copy link", copied:"Copied", inviteHelp:"Give it to your friends: they paste it in the game's \"Join\" and get in.", addresses:"Addresses in the code:", reach:"From the internet", roomTitle:"Room and password", room:"Room", password:"Password", change:"Change", show:"Show", hide:"Hide", generate:"New random", remove:"Remove", codeHas:"The code carries", optPassword:"the password", optHint:"only a hint", optNone:"nothing (asked when joining)", hintPh:"hint", save:"Save", secretHelp:"Whoever has a code with the password can join: if you will publish it, choose \"only a hint\".", players:"Players", name:"Name", state:"State", noPlayers:"Nobody has joined yet.", logNote:"The console window is the server's log.", confirmStop:"Stop the server? Players will be disconnected.", noPassword:"no password", states:{lobby:"in the menu", joining:"joining", playing:"playing", waiting:"waiting", disconnected:"disconnected"}, error:"Error: " }
+};
+const $ = id => document.getElementById(id);
+const token = new URLSearchParams(location.hash.slice(1)).get("t") || "";
+let lang = null;
+try { lang = localStorage.getItem("zmp-lang"); } catch (e) {}
+lang = lang || (navigator.language || "es").slice(0, 2);
+if (!T[lang]) lang = "en";
+let state = null, edited = {};
+function tr() {
+  const t = T[lang]; document.documentElement.lang = lang; $("lang").value = lang;
+  document.querySelectorAll("[data-t]").forEach(e => { if (t[e.dataset.t]) e.textContent = t[e.dataset.t]; });
+  document.querySelectorAll("[data-ph]").forEach(e => { e.placeholder = t[e.dataset.ph]; });
+  document.title = t.title; if (state) render(state);
+}
+async function api(path, body) {
+  const r = await fetch(path, { method: body ? "POST" : "GET", headers: { "X-ZMP-Token": token, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+function hex(c) { return c < 0 ? "transparent" : "#" + c.toString(16).padStart(6, "0"); }
+function render(s) {
+  const t = T[lang]; state = s;
+  $("code").textContent = s.invite.code || "—";
+  $("addrs").textContent = (s.invite.addresses || []).join(", ");
+  const r = s.reach, cls = { open:"ok", confirmed:"ok", cgnat:"warn", no_upnp:"warn", refused:"bad", disabled:"warn", local_only:"warn", checking:"" }[r.state] || "";
+  $("reach").className = "reach " + cls;
+  $("reachMsg").textContent = lang === "es" ? r.message_es : r.message_en;
+  $("reachAdvice").textContent = lang === "es" ? r.advice_es : r.advice_en;
+  if (!edited.room) $("room").value = s.room;
+  if (!edited.pw) $("pw").value = s.password;
+  $("pw").placeholder = s.password_set ? "" : t.noPassword;
+  if (!edited.secret) { $("secret").value = s.invite_secret; $("hint").value = s.hint; }
+  $("hint").style.display = $("secret").value === "hint" ? "" : "none";
+  const tb = $("players"); tb.textContent = "";
+  for (const p of s.players) {
+    const tr = document.createElement("tr");
+    const n = document.createElement("td"); const d = document.createElement("span"); d.className = "dot"; d.style.background = hex(p.color); n.append(d, p.name + (p.room !== s.room ? " (" + p.room + ")" : ""));
+    const st = document.createElement("td"); st.textContent = t.states[p.state] || p.state;
+    const ms = document.createElement("td"); ms.textContent = p.rtt >= 0 ? p.rtt : "—";
+    tr.append(n, st, ms); tb.append(tr);
+  }
+  $("nplayers").textContent = s.players.length;
+  $("noPlayers").style.display = s.players.length ? "none" : "";
+  $("version").textContent = "zmp-server " + s.version + " · " + s.listen;
+}
+async function refresh() {
+  try { render(await api("/api/state")); } catch (e) { if (state) stopped(); }
+}
+function stopped() { $("ui").style.display = "none"; $("stop").style.display = "none"; $("stopped").style.display = "block"; clearInterval(timer); }
+async function act(fn) { try { render(await fn()); edited = {}; } catch (e) { alert(T[lang].error + e.message); } }
+function copy(text) { navigator.clipboard.writeText(text).then(() => { $("copied").textContent = T[lang].copied; setTimeout(() => $("copied").textContent = "", 1500); }); }
+$("copyCode").onclick = () => state && copy(state.invite.code);
+$("copyLink").onclick = () => state && copy(state.invite.link);
+$("room").oninput = () => edited.room = true;
+$("pw").oninput = () => edited.pw = true;
+$("secret").onchange = () => { edited.secret = true; $("hint").style.display = $("secret").value === "hint" ? "" : "none"; };
+$("hint").oninput = () => edited.secret = true;
+$("saveRoom").onclick = () => act(() => api("/api/room", { room: $("room").value }));
+$("savePw").onclick = () => act(() => api("/api/password", { password: $("pw").value }));
+$("genPw").onclick = () => act(() => api("/api/password", { generate: true }));
+$("noPw").onclick = () => act(() => api("/api/password", { password: "" }));
+$("showPw").onclick = () => { const p = $("pw"); p.type = p.type === "password" ? "text" : "password"; $("showPw").textContent = T[lang][p.type === "password" ? "show" : "hide"]; };
+$("saveSecret").onclick = () => act(() => api("/api/invite", { secret: $("secret").value, hint: $("hint").value }));
+$("stop").onclick = async () => { if (!confirm(T[lang].confirmStop)) return; try { await api("/api/stop", {}); } catch (e) {} stopped(); };
+$("lang").onchange = () => { lang = $("lang").value; try { localStorage.setItem("zmp-lang", lang); } catch (e) {} tr(); };
+tr();
+refresh();
+const timer = setInterval(refresh, 1500);
+</script>
+</body>
+</html>

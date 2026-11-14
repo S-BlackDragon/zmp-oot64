@@ -23,11 +23,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/S-BlackDragon/zmp-oot64/server/internal/protocol"
+	"github.com/S-BlackDragon/zmp-oot64/server/internal/roomauth"
 )
 
 // MaxPlayersPerRoom matches ZMP_MAX_PLAYERS (and the number of group slots).
@@ -95,6 +97,23 @@ type Config struct {
 	// GET on the port serves its files, so players can open http://<server>:<port>/ and play in the browser against
 	// this same server. "" (the default) serves only the health line.
 	WebDir string
+
+	// Protocol 5 (the protocol 5 design notes). ServerName is shown to the players (WELCOME, ROOM_LIST).
+	ServerName string
+	// ServerPassword: a password to use this server at all ("" none). Only its derived key is kept.
+	ServerPassword string
+	// RequireRoomPassword refuses to make rooms without a password.
+	RequireRoomPassword bool
+	// MaxRooms bounds the open rooms (0: no bound).
+	MaxRooms int
+	// MaxConnsPerIP and MaxRoomsPerIP bound what one address may have at once (relays; 0: no bound). Behind a
+	// tunnel that hides the players' addresses every player looks the same: keep them 0 there.
+	MaxConnsPerIP int
+	MaxRoomsPerIP int
+	// ListRooms answers ROOM_LIST_REQUEST (off by default; never with a server password).
+	ListRooms bool
+	// RoomKeyTTL forgets the password of a room unused this long (0: never). Relays: 7 days.
+	RoomKeyTTL time.Duration
 }
 
 func (c *Config) setDefaults() {
@@ -143,6 +162,14 @@ type Server struct {
 
 	pendingSaves []*saveJob // canonical games to write (outside the lock)
 
+	// Protocol 5.
+	keys         *roomauth.Store   // the rooms' keys (room_keys.json in the data dir once PrepareDataDir ran)
+	serverKey    []byte            // ServerKey of Config.ServerPassword, nil without one
+	limiter      *roomauth.Limiter // failed passwords
+	ipConns      map[string]int    // open game connections per address (guarded by mu)
+	allowedRooms map[string]bool   // nil: any room (guarded by mu)
+	nextPrune    time.Time
+
 	keptBlobs [][]byte // (only with Config.TestKeepBlobs)
 }
 
@@ -154,6 +181,8 @@ type Room struct {
 	clients        map[uint32]*client
 	groups         map[uint32]*group
 	lastPlayerList time.Time
+	owner          string // roomauth.OwnerID of its creator when it had a player_key ("" none)
+	creatorIP      string // address of its creator (MaxRoomsPerIP)
 
 	// Protocol 3: the canonical shared game (nil until the first group is founded) and the world clock.
 	canon     *canonical
@@ -206,15 +235,18 @@ func (r *Room) advanceClockLocked(now time.Time) {
 }
 
 type client struct {
-	id       uint32
-	name     string
-	remote   string
-	conn     transport
-	room     *Room
-	q        chan []byte
-	done     chan struct{}
-	doneOnce sync.Once
-	lastRecv atomic.Int64 // UnixNano of the last received frame
+	id        uint32
+	name      string
+	ident     string // identity: "k:"+player_key (protocol 5) or "n:"+name
+	playerKey string // protocol 5, "" none
+	color     int    // protocol 5: 0xRRGGBB, -1 none
+	remote    string
+	conn      transport
+	room      *Room
+	q         chan []byte
+	done      chan struct{}
+	doneOnce  sync.Once
+	lastRecv  atomic.Int64 // UnixNano of the last received frame
 
 	// Guarded by Server.mu.
 	gone         bool               // removed from its room
@@ -287,8 +319,11 @@ func (s *Server) writer(c *client) {
 // New creates a server. Call Serve or ListenAndServe.
 func New(cfg Config) *Server {
 	cfg.setDefaults()
+	keys, _ := roomauth.OpenStore("", cfg.RoomKeyTTL) // (in memory until PrepareDataDir opens the data dir's)
 	return &Server{cfg: cfg, log: cfg.Logger, start: time.Now(), rooms: map[string]*Room{},
-		conns: map[net.Conn]struct{}{}, stop: make(chan struct{})}
+		keys: keys, serverKey: roomauth.ServerKey(cfg.ServerPassword), limiter: roomauth.NewLimiter(),
+		ipConns: map[string]int{},
+		conns:   map[net.Conn]struct{}{}, stop: make(chan struct{})}
 }
 
 // PrepareDataDir makes sure the data directory (canonical saves, later phases) is writable.
@@ -304,7 +339,31 @@ func (s *Server) PrepareDataDir() error {
 	if err := os.WriteFile(probe, []byte("ok"), 0o644); err != nil {
 		return fmt.Errorf("data dir not writable: %w", err)
 	}
-	return os.Remove(probe)
+	if err := os.Remove(probe); err != nil {
+		return err
+	}
+	// The rooms' passwords live with their saves. A file that cannot be read stops the server: starting without it
+	// would open every room that has a password.
+	keys, err := roomauth.OpenStore(s.cfg.DataDir, s.cfg.RoomKeyTTL)
+	if err != nil {
+		return fmt.Errorf("%w (fix or remove the file: its rooms lose their passwords)", err)
+	}
+	for room, k := range s.keys.Fixed() {
+		_ = keys.Set(room, k, "", true, time.Now())
+	}
+	s.keys = keys
+	if n := len(keys.Rooms()); n > 0 {
+		s.log.Printf("room passwords: %d rooms have one (%s)", n, roomauth.FileName)
+	}
+	return nil
+}
+
+// ownerOf: the OwnerID a room made by c remembers ("" for clients without a player_key: a name proves nothing).
+func (s *Server) ownerOf(c *client) string {
+	if c.playerKey == "" {
+		return ""
+	}
+	return roomauth.OwnerID(c.ident)
 }
 
 // ListenAndServe listens on cfg.Listen and serves until Close.
@@ -412,6 +471,9 @@ func (s *Server) Close() {
 type RoomSnapshot struct {
 	Name    string
 	Players []protocol.PlayerInfo
+	// BuildHash and Engine are the room's (its first client's handshake; empty for a room nobody has created yet).
+	BuildHash string
+	Engine    string
 }
 
 // Rooms returns a sorted snapshot of all rooms.
@@ -420,7 +482,8 @@ func (s *Server) Rooms() []RoomSnapshot {
 	defer s.mu.Unlock()
 	var out []RoomSnapshot
 	for _, r := range s.rooms {
-		out = append(out, RoomSnapshot{Name: r.Name, Players: r.playersLocked()})
+		out = append(out, RoomSnapshot{Name: r.Name, Players: r.playersLocked(), BuildHash: r.ref.BuildHash,
+			Engine: r.ref.Engine})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -448,6 +511,10 @@ func (r *Room) playersLocked() []protocol.PlayerInfo {
 	for _, c := range r.clients {
 		p := protocol.PlayerInfo{ID: c.id, Name: c.name, Slot: -1, RTT: -1, State: protocol.StateLobby,
 			Scene: c.lastScene}
+		if r.proto >= 5 {
+			col := c.color
+			p.Color = &col
+		}
 		if mean, _, ok := c.rttStats(); ok {
 			p.RTT = int(math.Round(mean))
 		}
@@ -469,8 +536,13 @@ func (r *Room) playersLocked() []protocol.PlayerInfo {
 	for _, g := range r.sortedGroups() {
 		for _, sl := range g.slots {
 			if sl != nil && sl.client == nil {
-				out = append(out, protocol.PlayerInfo{ID: sl.lastID, Name: sl.name, Slot: sl.index, RTT: -1,
-					State: protocol.StateDisconnected, Scene: g.scene, Group: g.id})
+				p := protocol.PlayerInfo{ID: sl.lastID, Name: sl.name, Slot: sl.index, RTT: -1,
+					State: protocol.StateDisconnected, Scene: g.scene, Group: g.id}
+				if r.proto >= 5 {
+					col := sl.color
+					p.Color = &col
+				}
+				out = append(out, p)
 			}
 		}
 	}
@@ -481,12 +553,17 @@ func (r *Room) playersLocked() []protocol.PlayerInfo {
 // playerListLocked sends PLAYER_LIST to every client of the room with the input delay and last tick of its own group.
 func (s *Server) playerListLocked(r *Room) {
 	players := r.playersLocked()
+	var hasKey *bool
+	if r.proto >= 5 {
+		k := s.keys.Get(r.Name) != nil
+		hasKey = &k
+	}
 	var common []byte
 	for _, c := range r.sortedClients() {
 		if c.slot == nil {
 			if common == nil {
 				f, err := protocol.Encode(protocol.PlayerList{T: "PLAYER_LIST", Players: players, Delay: InitialDelay,
-					GroupTick: -1})
+					GroupTick: -1, RoomPassword: hasKey})
 				if err != nil {
 					return
 				}
@@ -497,7 +574,7 @@ func (s *Server) playerListLocked(r *Room) {
 		}
 		g := c.slot.g
 		f, err := protocol.Encode(protocol.PlayerList{T: "PLAYER_LIST", Players: players, Delay: g.delay,
-			GroupTick: g.nextTick - 1})
+			GroupTick: g.nextTick - 1, RoomPassword: hasKey})
 		if err != nil {
 			return
 		}
@@ -531,32 +608,51 @@ func (r *Room) sortedClients() []*client {
 	return out
 }
 
-// checkHandshake compares a newcomer with the room reference. Returns reason and detail.
-func checkHandshake(ref, h protocol.Hello) (string, string) {
+// checkHandshake compares a newcomer with the room reference (nil: it matches).
+func checkHandshake(ref, h protocol.Hello) *rejection {
+	if ref.Engine != "" && h.Engine != "" && ref.Engine != h.Engine {
+		return rej("engine_mismatch", fmt.Sprintf("La sala usa el motor %s y tu juego el %s.", ref.Engine, h.Engine),
+			fmt.Sprintf("The room runs the %s engine and your game the %s engine.", ref.Engine, h.Engine),
+			"engine", ref.Engine, "build_hash", ref.BuildHash)
+	}
 	if h.BuildHash != ref.BuildHash {
-		return "build_mismatch", fmt.Sprintf("Tu version del juego (%s) no coincide con la de la sala (%s).", short(h.BuildHash), short(ref.BuildHash))
+		return rej("build_mismatch", fmt.Sprintf("Tu version del juego (%s) no coincide con la de la sala (%s).", short(h.BuildHash), short(ref.BuildHash)),
+			fmt.Sprintf("Your game version (%s) is not the room's (%s).", short(h.BuildHash), short(ref.BuildHash)),
+			"room_build", short(ref.BuildHash), "your_build", short(h.BuildHash))
 	}
 	if h.OotHash != ref.OotHash {
+		args := []string{}
+		if h.RomName != "" && ref.RomName != "" {
+			args = []string{"room_rom", ref.RomName, "your_rom", h.RomName}
+		}
+		en := fmt.Sprintf("Your oot.o2r (%s) is not the room's (%s): make the assets from the same ROM.", short(h.OotHash), short(ref.OotHash))
 		// Phase 5b: the versions by name. The check itself is on the content: two versions whose simulation
 		// data and resource list are the same have the same hash and play together.
 		if h.RomName != "" && ref.RomName != "" && h.RomName != ref.RomName {
-			return "oot_mismatch", fmt.Sprintf("Tu ROM es %s y la sala usa %s. Todos los jugadores de una sala tienen que generar los assets desde la misma version de ROM.", h.RomName, ref.RomName)
+			return rej("oot_mismatch", fmt.Sprintf("Tu ROM es %s y la sala usa %s. Todos los jugadores de una sala tienen que generar los assets desde la misma version de ROM.", h.RomName, ref.RomName),
+				fmt.Sprintf("Your ROM is %s and the room uses %s.", h.RomName, ref.RomName), args...)
 		}
 		if h.RomName != "" && h.RomName == ref.RomName {
-			return "oot_mismatch", fmt.Sprintf("Tu ROM y la de la sala son %s, pero el contenido de tu oot.o2r (%s) no coincide con el de la sala (%s). Vuelve a generar los assets desde la ROM original, sin mods.", h.RomName, short(h.OotHash), short(ref.OotHash))
+			return rej("oot_mismatch", fmt.Sprintf("Tu ROM y la de la sala son %s, pero el contenido de tu oot.o2r (%s) no coincide con el de la sala (%s). Vuelve a generar los assets desde la ROM original, sin mods.", h.RomName, short(h.OotHash), short(ref.OotHash)),
+				en, args...)
 		}
-		return "oot_mismatch", fmt.Sprintf("Tu oot.o2r (%s) no coincide con el de la sala (%s). Genera los assets desde la misma ROM.", short(h.OotHash), short(ref.OotHash))
+		return rej("oot_mismatch", fmt.Sprintf("Tu oot.o2r (%s) no coincide con el de la sala (%s). Genera los assets desde la misma ROM.", short(h.OotHash), short(ref.OotHash)),
+			en, args...)
 	}
 	if h.SohHash != ref.SohHash {
-		return "soh_mismatch", fmt.Sprintf("Tu soh.o2r (%s) no coincide con el de la sala (%s).", short(h.SohHash), short(ref.SohHash))
+		return rej("soh_mismatch", fmt.Sprintf("Tu soh.o2r (%s) no coincide con el de la sala (%s).", short(h.SohHash), short(ref.SohHash)),
+			fmt.Sprintf("Your soh.o2r (%s) is not the room's (%s).", short(h.SohHash), short(ref.SohHash)))
 	}
 	if h.CvarProfileHash != ref.CvarProfileHash {
-		return "cvar_profile_mismatch", "Tu perfil de ajustes de juego no coincide con el de la sala."
+		return rej("cvar_profile_mismatch", "Tu perfil de ajustes de juego no coincide con el de la sala.",
+			"Your game settings profile is not the room's.")
 	}
 	if h.RandoSeed != ref.RandoSeed {
-		return "rando_seed_mismatch", fmt.Sprintf("Tu semilla de randomizer (%d) no coincide con la de la sala (%d).", h.RandoSeed, ref.RandoSeed)
+		return rej("rando_seed_mismatch", fmt.Sprintf("Tu semilla de randomizer (%d) no coincide con la de la sala (%d).", h.RandoSeed, ref.RandoSeed),
+			fmt.Sprintf("Your randomizer seed (%d) is not the room's (%d).", h.RandoSeed, ref.RandoSeed),
+			"room_seed", strconv.FormatUint(uint64(ref.RandoSeed), 10))
 	}
-	return "", ""
+	return nil
 }
 
 func short(h string) string {
@@ -577,6 +673,7 @@ func writeNow(conn transport, v any) error {
 
 func (s *Server) handle(conn transport) {
 	remote := conn.RemoteAddr()
+	ip := hostOf(remote)
 	defer conn.Close()
 
 	_ = conn.SetReadDeadline(time.Now().Add(s.cfg.HelloTimeout))
@@ -589,91 +686,222 @@ func (s *Server) handle(conn transport) {
 		return
 	}
 	var hello protocol.Hello
-	if t, err := protocol.Type(body); err != nil || t != "HELLO" || protocol.Decode(body, &hello) != nil {
+	t, terr := protocol.Type(body)
+	if terr == nil && t == "ROOM_LIST_REQUEST" {
+		s.serveRoomList(conn, body)
+		return
+	}
+	if terr != nil || t != "HELLO" || protocol.Decode(body, &hello) != nil {
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		_ = writeNow(conn, protocol.Reject{T: "REJECT", Reason: "bad_hello", Detail: "El primer mensaje debe ser HELLO."})
 		s.log.Printf("%s: rejected (bad_hello)", remote)
 		return
 	}
-	reject := func(reason, detail string) {
+	reject := func(r *rejection) {
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		_ = writeNow(conn, protocol.Reject{T: "REJECT", Reason: reason, Detail: detail})
-		s.log.Printf("%s: rejected name=%q room=%q reason=%s", remote, hello.Name, hello.Room, reason)
+		_ = writeNow(conn, r.message(hello.Proto))
+		s.log.Printf("%s: rejected name=%q room=%q proto=%d reason=%s", remote, hello.Name, hello.Room, hello.Proto, r.reason)
 	}
 	if hello.Proto < protocol.MinVersion || hello.Proto > protocol.Version {
-		reject("protocol_mismatch", fmt.Sprintf("Version de protocolo %d; el servidor usa de %d a %d. Actualiza el juego.",
-			hello.Proto, protocol.MinVersion, protocol.Version))
+		reject(rej("protocol_mismatch", fmt.Sprintf("Version de protocolo %d; el servidor usa de %d a %d. Actualiza el juego.",
+			hello.Proto, protocol.MinVersion, protocol.Version),
+			fmt.Sprintf("Protocol %d; this server speaks %d to %d.", hello.Proto, protocol.MinVersion, protocol.Version),
+			"min", itoa(protocol.MinVersion), "max", itoa(protocol.Version)))
 		return
 	}
+	if hello.Proto >= 5 && (len(hello.AuthNonce) != roomauth.NonceSize || hello.PlayerKey != "" && !validPlayerKey(hello.PlayerKey)) {
+		reject(rej("bad_hello", "", "HELLO 5 needs a 16-byte auth_nonce, and player_key is 32 lowercase hex characters."))
+		return
+	}
+	if hello.Proto < 5 { // (fields an old client cannot mean)
+		hello.PlayerKey, hello.Color, hello.Engine, hello.HasPassword = "", nil, "", false
+	}
 	if hello.Name == "" || len(hello.Name) > 32 {
-		reject("bad_name", "El nombre debe tener entre 1 y 32 caracteres.")
+		reject(rej("bad_name", "El nombre debe tener entre 1 y 32 caracteres.", "The name must be 1 to 32 bytes.", "max", "32"))
 		return
 	}
 	if hello.Room == "" || len(hello.Room) > 64 {
-		reject("bad_room", "El nombre de la sala debe tener entre 1 y 64 caracteres.")
+		reject(rej("bad_room", "El nombre de la sala debe tener entre 1 y 64 caracteres.", "The room must be 1 to 64 bytes.", "max", "64"))
 		return
+	}
+	tracked := s.trackConn(ip)
+	defer s.untrackConn(ip)
+	if !tracked {
+		reject(rej("too_many_connections", "Demasiadas conexiones desde tu direccion.", "Too many connections from your address.",
+			"max", itoa(s.cfg.MaxConnsPerIP)))
+		return
+	}
+	if blocked, d := s.limiter.Blocked(ip, hello.Room, time.Now()); blocked {
+		secs := int(d.Round(time.Second) / time.Second)
+		reject(rej("too_many_attempts", fmt.Sprintf("Demasiados intentos fallidos: espera %d s.", secs),
+			fmt.Sprintf("Too many failed attempts: wait %d s.", secs), "retry_after", itoa(secs)))
+		return
+	}
+	if !s.roomAllowed(hello.Room) {
+		reject(rej("room_not_found", "Este servidor no tiene esa sala.", "This server only hosts its own rooms."))
+		return
+	}
+	failed := func(r *rejection) { // a wrong password counts for too_many_attempts
+		s.limiter.Fail(ip, hello.Room, time.Now())
+		reject(r)
+	}
+
+	// Passwords (protocol 5 notes 2.2): the CHALLENGE and the server half of the AUTH outside the lock.
+	ch, needAuth, r := s.challengeFor(hello)
+	if r != nil {
+		reject(r)
+		return
+	}
+	var auth *protocol.Auth
+	var serverConfirm []byte
+	if needAuth {
+		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if err := writeNow(conn, ch); err != nil {
+			return
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.HelloTimeout))
+		ab, err := conn.ReadFrame()
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				reject(rej("auth_timeout", "", "No AUTH in time."))
+			}
+			return
+		}
+		auth = &protocol.Auth{}
+		if at, err := protocol.Type(ab); err != nil || at != "AUTH" || protocol.Decode(ab, auth) != nil {
+			reject(rej("bad_hello", "", "The answer to CHALLENGE must be AUTH."))
+			return
+		}
+		var r *rejection
+		if serverConfirm, r = s.checkServerProof(hello, ch, auth); r != nil {
+			if r.reason == "bad_server_password" {
+				failed(r)
+			} else {
+				reject(r)
+			}
+			return
+		}
 	}
 
 	now := time.Now()
-	c := &client{name: hello.Name, remote: remote, conn: conn, q: make(chan []byte, s.cfg.SendQueueSize),
+	c := &client{name: hello.Name, ident: identity(hello), playerKey: hello.PlayerKey, color: colorOf(hello.Color),
+		remote: remote, conn: conn, q: make(chan []byte, s.cfg.SendQueueSize),
 		done: make(chan struct{}), pings: map[uint64]time.Time{}, nextPing: now}
 	c.lastRecv.Store(now.UnixNano())
 
 	s.mu.Lock()
-	room, ok := s.rooms[hello.Room]
-	if ok && room.proto != hello.Proto {
+	unlockReject := func(r *rejection) {
 		s.mu.Unlock()
-		reject("protocol_mismatch", fmt.Sprintf("La sala usa la version de protocolo %d y tu juego la %d: usad todos la misma version del juego.",
-			room.proto, hello.Proto))
+		reject(r)
+	}
+	room, ok := s.rooms[hello.Room]
+	newKey, roomConfirm, r := s.roomAuthLocked(hello, ch, auth, ok)
+	if r != nil {
+		s.mu.Unlock()
+		if r.reason == "bad_password" {
+			failed(r)
+		} else {
+			reject(r)
+		}
+		return
+	}
+	if ok && room.proto != hello.Proto {
+		unlockReject(rej("protocol_mismatch", fmt.Sprintf("La sala usa la version de protocolo %d y tu juego la %d: usad todos la misma version del juego.",
+			room.proto, hello.Proto), fmt.Sprintf("The room speaks protocol %d and your game %d.", room.proto, hello.Proto),
+			"min", itoa(protocol.MinVersion), "max", itoa(protocol.Version), "room_proto", itoa(room.proto)))
 		return
 	}
 	if ok {
-		if reason, detail := checkHandshake(room.ref, hello); reason != "" {
-			s.mu.Unlock()
-			reject(reason, detail)
+		if r := checkHandshake(room.ref, hello); r != nil {
+			unlockReject(r)
 			return
 		}
+		// A different player with this name (another key, or one with a key and one without) is always name_taken;
+		// the same player_key takes the old connection over at once; two clients without a key keep the old rule
+		// (the newcomer replaces a connection silent for NameTakeoverAfter, or zero-filled).
+		var takeover []*client
 		for _, other := range room.sortedClients() {
+			if hello.PlayerKey != "" && other.playerKey == hello.PlayerKey {
+				takeover = append(takeover, other)
+				continue
+			}
 			if other.name != hello.Name {
 				continue
+			}
+			if hello.PlayerKey != "" || other.playerKey != "" {
+				unlockReject(rej("name_taken", fmt.Sprintf("Ya hay un jugador llamado %q en la sala.", hello.Name),
+					fmt.Sprintf("There is already a player called %q in the room.", hello.Name), "name", hello.Name))
+				return
 			}
 			idle := now.Sub(time.Unix(0, other.lastRecv.Load()))
 			marked := other.slot != nil && other.slot.filled && other.slot.resumeAt < 0
 			if idle < s.cfg.NameTakeoverAfter && !marked {
-				s.mu.Unlock()
-				reject("name_taken", fmt.Sprintf("Ya hay un jugador llamado %q en la sala.", hello.Name))
+				unlockReject(rej("name_taken", fmt.Sprintf("Ya hay un jugador llamado %q en la sala.", hello.Name),
+					fmt.Sprintf("There is already a player called %q in the room.", hello.Name), "name", hello.Name))
 				return
 			}
 			s.log.Printf("%s: name=%q room=%q takes over id=%d (silent %v, zero-filled %v)", remote, hello.Name,
 				room.Name, other.id, idle.Round(time.Millisecond), marked)
+			takeover = append(takeover, other)
+		}
+		for _, other := range takeover {
+			if other.playerKey != "" {
+				s.log.Printf("%s: name=%q room=%q takes over id=%d (same player_key)", remote, hello.Name, room.Name, other.id)
+			}
 			s.removeClientLocked(other, "replaced by a new connection")
 			_ = other.conn.Close()
 		}
 		if _, still := s.rooms[hello.Room]; !still { // the takeover emptied the room
 			room = s.newRoomLocked(hello)
+			room.owner, room.creatorIP = s.ownerOf(c), ip
 		}
 		if len(room.clients) >= MaxPlayersPerRoom {
-			s.mu.Unlock()
-			reject("room_full", fmt.Sprintf("La sala esta llena (%d jugadores).", MaxPlayersPerRoom))
+			unlockReject(rej("room_full", fmt.Sprintf("La sala esta llena (%d jugadores).", MaxPlayersPerRoom),
+				fmt.Sprintf("The room is full (%d players).", MaxPlayersPerRoom), "max", itoa(MaxPlayersPerRoom)))
 			return
 		}
 	} else {
+		if s.cfg.MaxRooms > 0 && len(s.rooms) >= s.cfg.MaxRooms {
+			unlockReject(rej("rooms_limit", "El servidor tiene ya todas las salas que admite.", "This server has as many rooms as it takes.",
+				"max", itoa(s.cfg.MaxRooms)))
+			return
+		}
+		if s.cfg.MaxRoomsPerIP > 0 && s.roomsCreatedByLocked(ip) >= s.cfg.MaxRoomsPerIP {
+			unlockReject(rej("rooms_limit", "Ya has creado todas las salas que admite el servidor.", "You already made as many rooms as this server takes from one address.",
+				"max", itoa(s.cfg.MaxRoomsPerIP), "per_ip", "1"))
+			return
+		}
 		room = s.newRoomLocked(hello)
+		room.owner, room.creatorIP = s.ownerOf(c), ip
+		if newKey != nil {
+			if err := s.keys.Set(room.Name, newKey, room.owner, false, now); err != nil {
+				s.log.Printf("room=%q: room key not saved: %v", room.Name, err)
+			}
+			s.log.Printf("room=%q made with a password by name=%q", room.Name, hello.Name)
+		}
 	}
 	s.nextID++
 	c.id = s.nextID
 	c.room = room
 	room.clients[c.id] = c
 	c.lastScene = -1
-	rejoin := room.slotByName(c.name) != nil
+	rejoin := room.slotByIdent(c.ident) != nil
 	s.wg.Add(1)
 	go s.writer(c)
-	s.sendLocked(c, protocol.Welcome{T: "WELCOME", PlayerID: c.id, Room: room.Name, Players: room.playersLocked(),
-		Proto: room.proto, Rejoin: rejoin, LeaveShared: true})
+	welcome := protocol.Welcome{T: "WELCOME", PlayerID: c.id, Room: room.Name, Players: room.playersLocked(),
+		Proto: room.proto, Rejoin: rejoin, LeaveShared: true}
+	if room.proto >= 5 {
+		welcome.RoomPassword = s.keys.Get(room.Name) != nil
+		welcome.RoomOwner = s.isOwnerLocked(c)
+		welcome.RoomConfirm, welcome.ServerConfirm = roomConfirm, serverConfirm
+		welcome.ServerName, welcome.MaxPlayers = s.cfg.ServerName, MaxPlayersPerRoom
+	}
+	s.sendLocked(c, welcome)
 	s.playerListLocked(room)
 	s.mu.Unlock()
-	s.log.Printf("%s: joined room id=%d name=%q room=%q build=%s rejoin=%v", remote, c.id, c.name, room.Name,
-		short(hello.BuildHash), rejoin)
+	s.keys.Touch(room.Name, now)
+	s.log.Printf("%s: joined room id=%d name=%q room=%q build=%s rejoin=%v proto=%d", remote, c.id, c.name, room.Name,
+		short(hello.BuildHash), rejoin, hello.Proto)
 
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
@@ -782,6 +1010,21 @@ func (s *Server) dispatch(c *client, t string, body []byte) {
 		if protocol.Decode(body, &m) == nil {
 			s.clockLocked(c, m)
 		}
+	case "RENAME":
+		var m protocol.Rename
+		if c.room.proto >= 5 && protocol.Decode(body, &m) == nil {
+			s.renameLocked(c, m)
+		}
+	case "SET_COLOR":
+		var m protocol.SetColor
+		if c.room.proto >= 5 && protocol.Decode(body, &m) == nil {
+			s.setColorLocked(c, m)
+		}
+	case "ROOM_SET_KEY":
+		var m protocol.RoomSetKey
+		if c.room.proto >= 5 && protocol.Decode(body, &m) == nil {
+			s.roomSetKeyLocked(c, m)
+		}
 	default:
 		// Unknown types are ignored for forward compatibility within the same version.
 	}
@@ -835,8 +1078,22 @@ func (s *Server) housekeep() {
 			}
 			jobs := s.pendingSaves
 			s.pendingSaves = nil
+			prune := !now.Before(s.nextPrune)
+			var open map[string]bool
+			if prune {
+				s.nextPrune = now.Add(time.Hour)
+				open = map[string]bool{}
+				for name := range s.rooms {
+					open[name] = true
+				}
+			}
 			s.mu.Unlock()
 			s.writeJobs(jobs)
+			if prune { // (forgotten passwords of a relay's abandoned rooms; the open ones stay fresh)
+				if gone := s.keys.Prune(now, func(r string) bool { return open[r] }); len(gone) > 0 {
+					s.log.Printf("room passwords: forgot %d unused rooms", len(gone))
+				}
+			}
 		}
 	}
 }
