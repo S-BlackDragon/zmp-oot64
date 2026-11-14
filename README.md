@@ -81,7 +81,7 @@ Next to it:
 | Path | What |
 |---|---|
 | root (`soh/`, `libultraship/`, `torch/`, `CMakeLists.txt`...) | The game: Ship of Harkinian with ZMP (`soh/soh/Zmp/`, and `// ZMP:` changes in the original files); libultraship and Torch as plain folders. The browser page is `soh/web/`. Ship of Harkinian's own readme: [README-SoH.md](README-SoH.md). |
-| [`server/`](server/) | `zmp-server`, the room/relay server (Go): TCP for the desktop game and WebSocket for the browser on one port, optional static files for the browser page, optional store of the players' logs ([off unless turned on](docs-zmp/en/09-player-logs.md)). Dockerfile and compose file in `server/deploy/`. |
+| [`server/`](server/) | `zmp-server`, the room/relay server (Go): TCP for the desktop game and WebSocket for the browser on one port, optional static files for the browser page. Dockerfile and compose file in `server/deploy/`. |
 | [`web/`](web/) | `make_web.py`: packs the browser build into a folder to serve. |
 | [`tools/`](tools/) | Packaging (`package_windows.py`), server binaries (`build_server.py`), the release check that no ROM data is shipped (`check_release.py`), and the guides that go into the zip. |
 | [`docs-zmp/`](docs-zmp/) | ZMP's guides in [English](docs-zmp/en/README.md) and [Spanish](docs-zmp/es/README.md): get the game, your ROM, play, host (PC, virtual LAN, VPS), browser mode, troubleshooting, building, releasing. (`docs/` is Ship of Harkinian's.) |

@@ -49,8 +49,6 @@ git pull && docker compose up -d --build   # update to the latest version
 
 Las partidas compartidas de las salas están en `server/deploy/data/`; haz una copia de seguridad de esa carpeta si te
 importan.
-Para guardar también los registros de tus jugadores en el servidor (opcional, apagado por defecto), mira
-[Registros de los jugadores en el servidor](09-player-logs.md).
 
 ## 3. Sin Docker
 

@@ -44,8 +44,7 @@ docker compose down                 # stop
 git pull && docker compose up -d --build   # update to the latest version
 ```
 
-The rooms' shared saves are in `server/deploy/data/`; back that folder up if you care about them. To keep your
-players' logs on the server as well (optional, off by default), see [Player logs on the server](09-player-logs.md).
+The rooms' shared saves are in `server/deploy/data/`; back that folder up if you care about them.
 
 ## 3. Without Docker
 

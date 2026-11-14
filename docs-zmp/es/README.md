@@ -18,10 +18,8 @@ Y además:
 
 7. [Modo navegador](07-browser-mode.md): juega en Chrome, Edge o Firefox, sin instalar nada.
 8. [Solución de problemas](08-troubleshooting.md): cada mensaje de error y qué hacer.
-9. [Registros de los jugadores en el servidor](09-player-logs.md): opcional, apagado salvo que el servidor lo active;
-   qué se envía y cómo no enviarlo.
-10. [Compilar desde el código fuente](build.md): compilaciones de Windows, navegador y servidor, empaquetado.
-11. [Publicar una versión](release.md) (para mantenedores).
+9. [Compilar desde el código fuente](build.md): compilaciones de Windows, navegador y servidor, empaquetado.
+10. [Publicar una versión](release.md) (para mantenedores).
 
 ## Cómo funciona ZMP, en un párrafo
 

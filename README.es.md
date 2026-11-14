@@ -86,7 +86,7 @@ dentro. Junto a él:
 | Ruta | Qué es |
 |---|---|
 | raíz (`soh/`, `libultraship/`, `torch/`, `CMakeLists.txt`...) | El juego: Ship of Harkinian con ZMP (`soh/soh/Zmp/` y los cambios marcados con `// ZMP:` en los archivos originales); libultraship y Torch como carpetas normales. La página del navegador está en `soh/web/`. El README propio de Ship of Harkinian: [README-SoH.md](README-SoH.md). |
-| [`server/`](server/) | `zmp-server`, el servidor de salas/retransmisión (Go): TCP para el juego de escritorio y WebSocket para el navegador en un solo puerto, y opcionalmente los archivos de la página del navegador y un almacén de los registros de los jugadores ([apagado salvo que se active](docs-zmp/es/09-player-logs.md)). Dockerfile y archivo de compose en `server/deploy/`. |
+| [`server/`](server/) | `zmp-server`, el servidor de salas/retransmisión (Go): TCP para el juego de escritorio y WebSocket para el navegador en un solo puerto, y opcionalmente los archivos de la página del navegador. Dockerfile y archivo de compose en `server/deploy/`. |
 | [`web/`](web/) | `make_web.py`: empaqueta la compilación del navegador en una carpeta lista para servir. |
 | [`tools/`](tools/) | Empaquetado (`package_windows.py`), binarios del servidor (`build_server.py`), la comprobación de que una versión no lleva datos de la ROM (`check_release.py`) y las guías que van dentro del zip. |
 | [`docs-zmp/`](docs-zmp/) | Las guías de ZMP en [inglés](docs-zmp/en/README.md) y [español](docs-zmp/es/README.md): conseguir el juego, tu ROM, jugar, hospedar (PC, LAN virtual, VPS), modo navegador, solución de problemas, compilar, publicar. (`docs/` es de Ship of Harkinian.) |

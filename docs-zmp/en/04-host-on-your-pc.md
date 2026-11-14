@@ -12,7 +12,7 @@ instead: it is usually easier.
 1. Put `zmp-server-<version>-windows-amd64.exe` in a folder of its own, for example `C:\Games\ZMP-server`, and rename
    it `zmp-server.exe` if you like.
 2. Double-click it. A console window opens and shows a line like
-   `zmp-server 0.6.1 protocol 4 listening on [::]:47100 (tcp and websocket)`. Keep that window open while you play;
+   `zmp-server 0.6.2 protocol 4 listening on [::]:47100 (tcp and websocket)`. Keep that window open while you play;
    closing it stops the server.
 3. The first time, **Windows Firewall** asks whether to allow it: allow it on **Private networks** (and on Public
    networks only if your home network is marked as public).
@@ -62,8 +62,7 @@ If it does not work:
 - The server has no accounts or passwords: **anyone who knows your address, the port and the room name can join that
   room**. Use a room name that is not easy to guess, and only give it to the people you play with.
 - Only the port `47100` is opened, and only `zmp-server` listens on it. It never runs the game, never receives
-  files from players other than the game's state, and never stores anything outside its `data` folder, unless you
-  turn on the optional [player logs](09-player-logs.md) (`-log-dir`), which it then keeps in that folder.
+  files from players other than the game's state, and never stores anything outside its `data` folder.
 - When you are done playing, close the server window, and remove the forwarding rule if you will not host again.
 
 ## 5. Browser players too

@@ -1,6 +1,6 @@
 """Builds the zmp-server release binaries (static, no dependencies) into dist/.
 
-    python tools/build_server.py --version 0.6.1
+    python tools/build_server.py --version 0.6.2
 
 Runs the server's tests first, then cross-compiles for Windows x64, Linux x64 and Linux ARM64 (Raspberry Pi 4/5,
 ARM VPS). Needs Go 1.26 or newer.

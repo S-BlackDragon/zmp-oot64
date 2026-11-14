@@ -24,7 +24,4 @@ por Tailscale/ZeroTier. Guias, modo navegador y solucion de problemas:
   https://github.com/S-BlackDragon/zmp-oot64/tree/zmp/docs-zmp/es
 
 Si algo falla: envia la carpeta "logs" de esta carpeta con lo que paso y la hora.
-REGISTROS: solo si el servidor al que te conectas dice que recoge registros (su dueno lo activo), el juego le envia
-tambien sus registros (nunca tu ROM ni tus partidas). Desmarca "Enviar mis registros..." en la ventana Sala ZMP para
-no enviarlos nunca. Detalles: docs-zmp/es/09-player-logs.md en el repositorio.
 El codigo de ZMP es MIT; Ship of Harkinian conserva sus propios terminos (LICENSING.md en el repositorio).

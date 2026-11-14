@@ -1,6 +1,6 @@
 """Builds the Windows player package dist/ZMP-<version>-windows.zip from the cpack zip of the distribution build.
 
-    python tools/package_windows.py --build <cpack zip> --version 0.6.1
+    python tools/package_windows.py --build <cpack zip> --version 0.6.2
 
 Input: the zip that `cpack -G ZIP -C Release` writes for a build configured with -DZMP_HARNESS=OFF
 (see docs-zmp/en/build.md). Output: soh.exe, soh.o2r (Ship of Harkinian's own data), the ROM converter's descriptions

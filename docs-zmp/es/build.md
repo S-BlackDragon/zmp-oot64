@@ -43,10 +43,10 @@ Empaquétalo como una versión publicada (no puede acabar ningún dato de ROM en
 
 ```powershell
 cd build\win; cpack -G ZIP -C Release; cd ..\..
-python tools\package_windows.py --build (Get-ChildItem _packages\*.zip | Select-Object -First 1).FullName --version 0.6.1
+python tools\package_windows.py --build (Get-ChildItem _packages\*.zip | Select-Object -First 1).FullName --version 0.6.2
 ```
 
-El resultado es `dist\ZMP-0.6.1-windows.zip`. Todos los jugadores de una sala necesitan el mismo `soh.exe`, así que da
+El resultado es `dist\ZMP-0.6.2-windows.zip`. Todos los jugadores de una sala necesitan el mismo `soh.exe`, así que da
 a tus amigos este zip en lugar de dejar que cada uno compile el suyo.
 
 ## Juego para navegador
@@ -83,7 +83,7 @@ go build -o zmp-server.exe ./cmd/zmp-server
 Todos los binarios de la versión publicada (Windows, Linux x64, Linux ARM64, estáticos, sin dependencias) de una vez:
 
 ```powershell
-python tools\build_server.py --version 0.6.1
+python tools\build_server.py --version 0.6.2
 ```
 
 Se escriben en `dist\`. La imagen de Docker se compila desde el código fuente: consulta [Hospedar en un VPS](06-host-on-a-vps.md).
