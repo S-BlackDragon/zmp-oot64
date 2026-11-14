@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cstring>
+#ifndef _WIN32
+#include <strings.h>
+#endif
 #include <ctime>
 #include <mutex>
 #include <thread>
@@ -24,6 +27,7 @@
 #include "soh/Zmp/Net/Host.h"
 #include "soh/Zmp/Net/Invite.h"
 #include "soh/Zmp/Net/Lan.h"
+#include "soh/Zmp/Test/Mutants.h"
 
 #if defined(_WIN32) && !defined(__EMSCRIPTEN__)
 #ifndef NOMINMAX
@@ -929,6 +933,32 @@ extern "C" int Zmp_LinkHandOff(void) {
 #else
     return 0;
 #endif
+}
+
+// A zmp:// argument is ZMP's (JoinFromCommandLine reads it from the process command line): it is taken out of the
+// arguments before Ship of Harkinian sees them, which would treat it as a ROM to extract and stop the start with a
+// "not a ROM" message box. Every start path goes through here (main, before InitOTR). Returns the new argc.
+extern "C" int Zmp_StripLinkArgs(int argc, char* argv[]) {
+    if (Zmp_TestMutant("enlace_como_rom")) { // (mutation test: the link reaches the ROM check again)
+        return argc;
+    }
+    int out = argc > 0 ? 1 : 0;
+    for (int i = 1; i < argc; i++) {
+        if (argv[i] != nullptr && strlen(argv[i]) > 4 &&
+#ifdef _WIN32
+            _strnicmp(argv[i], "zmp:", 4) == 0
+#else
+            strncasecmp(argv[i], "zmp:", 4) == 0
+#endif
+        ) {
+            continue;
+        }
+        argv[out++] = argv[i];
+    }
+    if (out < argc) {
+        argv[out] = nullptr;
+    }
+    return out;
 }
 
 namespace Zmp::Ui {

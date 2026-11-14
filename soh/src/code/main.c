@@ -47,6 +47,9 @@ void Main_LogSystemHeap(void) {
 int Zmp_InstallNoActivateHook(void); // ZMP: D-063
 void Zmp_InstallBootLog(void);       // ZMP: finding R
 int Zmp_LinkHandOff(void);           // ZMP: a zmp:// link goes to the copy already running
+#endif
+int Zmp_StripLinkArgs(int argc, char* argv[]); // ZMP: a zmp:// argument never reaches the ROM check
+#ifdef _WIN32
 int SDL_main(int argc, char* argv[]) {
     if (Zmp_LinkHandOff()) { // ZMP: handed to the running copy: this one ends before opening any window
         return 0;
@@ -69,6 +72,7 @@ int SDL_main(int argc, char* argv[]) {
 #else //_WIN32
 int main(int argc, char* argv[]) {
 #endif
+    argc = Zmp_StripLinkArgs(argc, argv); // ZMP: every start path: fresh start, URL-scheme launch, second copy
     GameConsole_Init();
     InitOTR(argc, argv);
     // TODO: Was moved to below InitOTR because it requires window to be setup. But will be late to catch crashes.

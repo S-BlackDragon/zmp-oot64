@@ -8,6 +8,7 @@
 #include <imgui.h>
 
 #include "SohGui.hpp"
+extern "C" void Zmp_BootMark(const char* what); // ZMP: logs/zmp_boot.log (Zmp/Zmp.cpp)
 
 #ifdef __APPLE__
 #include <fast/backends/gfx_metal.h>
@@ -265,6 +266,7 @@ void Destroy() {
 
 void RegisterPopup(std::string title, std::string message, std::string button1, std::string button2,
                    std::function<void()> button1callback, std::function<void()> button2callback) {
+    Zmp_BootMark(("boot: popup \"" + title + "\"").c_str()); // ZMP: the harness and the release smoke see it
     mModalWindow->RegisterPopup(title, message, button1, button2, button1callback, button2callback);
 }
 

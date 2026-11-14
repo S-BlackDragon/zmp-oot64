@@ -215,6 +215,9 @@
 //                          (D-226): a partner by her just west of the line keeps a Link who walks past it from
 //                          starting it
 
+// enlace_como_rom          (D-265): a zmp:// argument reaches Ship of Harkinian's "ROM on the command line" check
+//                          again (a "not a ROM" message box on a fresh start)
+
 #ifdef __cplusplus
 extern "C" {
 #endif

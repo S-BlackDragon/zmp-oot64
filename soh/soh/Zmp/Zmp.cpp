@@ -560,6 +560,24 @@ static LRESULT CALLBACK NoActivateCbtProc(int code, WPARAM wParam, LPARAM lParam
     if (code == HCBT_ACTIVATE && !UserAskedForActivation()) {
         return 1; // refuse the activation
     }
+    if (code == HCBT_CREATEWND) {
+        // A test instance never shows a dialog box (a message box, SDL's, a file dialog: class #32770) on the
+        // person's desktop: its creation is refused (the call returns as if closed) and logged, and the harness and
+        // the release smoke tests fail on that line.
+        wchar_t cls[32] = {};
+        if (GetClassNameW((HWND)wParam, cls, 32) > 0 && wcscmp(cls, L"#32770") == 0) {
+            auto* create = reinterpret_cast<CBT_CREATEWNDW*>(lParam);
+            char title[160] = {};
+            if (create != nullptr && create->lpcs != nullptr && create->lpcs->lpszName != nullptr &&
+                !IS_INTRESOURCE(create->lpcs->lpszName)) {
+                WideCharToMultiByte(CP_UTF8, 0, create->lpcs->lpszName, -1, title, sizeof(title) - 1, nullptr, nullptr);
+            }
+            char line[256];
+            snprintf(line, sizeof(line), "boot: dialog refused (test instance): \"%s\"", title);
+            Zmp_BootMark(line);
+            return 1;
+        }
+    }
     if (code == HCBT_CREATEWND && !Zmp_TestMutant("ventanas_delante")) {
         // A new top-level window is created at the BOTTOM of the z-order, not over the person's windows (D-110)
         auto* create = reinterpret_cast<CBT_CREATEWNDW*>(lParam);
