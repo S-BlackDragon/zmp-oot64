@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/S-BlackDragon/zmp-oot64/server/internal/protocol"
+	"github.com/S-BlackDragon/zmp-oot64/server/internal/zmplogs"
 )
 
 // transport is one client connection seen as a sequence of protocol frames (docs/PLAN_WEB.md 7.2, D-239). Two kinds
@@ -162,6 +163,11 @@ func (s *Server) httpHandler() http.Handler {
 		files = http.FileServer(http.Dir(s.cfg.WebDir))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The players' logs (D-247): an upload with the token of a WELCOME; 404 when this server does not collect them.
+		if r.URL.Path == zmplogs.Prefix {
+			s.logs.ServeHTTP(w, r)
+			return
+		}
 		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 			if r.URL.Path == "/healthz" || (files == nil && r.URL.Path == "/") {
 				w.Header().Set("Connection", "close")
@@ -212,7 +218,8 @@ func (s *Server) sniffAndServe(conn net.Conn, httpLn *chanListener) {
 		_ = conn.Close()
 		return
 	}
-	if string(head) == "GET " {
+	// Any HTTP method is HTTP: the log uploads (D-247) are a POST.
+	if isHTTPStart(string(head)) {
 		pc := &peekedConn{Conn: conn, r: r, done: make(chan struct{})}
 		if !httpLn.hand(pc) {
 			_ = conn.Close()
@@ -222,4 +229,13 @@ func (s *Server) sniffAndServe(conn net.Conn, httpLn *chanListener) {
 		return
 	}
 	s.handle(&tcpTransport{conn: conn, r: r})
+}
+
+// isHTTPStart says whether the first four bytes of a connection are the start of an HTTP request line.
+func isHTTPStart(head string) bool {
+	switch head {
+	case "GET ", "POST", "HEAD", "PUT ", "OPTI", "DELE", "PATC":
+		return true
+	}
+	return false
 }

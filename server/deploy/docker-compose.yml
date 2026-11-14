@@ -28,6 +28,11 @@ services:
       - ./data:/data
       # Browser game: put the web build (index.html, soh.js, soh.wasm, ...) in ./web and uncomment these two lines.
       # - ./web:/web:ro
+      # Players' logs (optional, off by default; docs-zmp/en/09-player-logs.md): mkdir -p logs && sudo chown 1000:1000 logs,
+      # then uncomment this line and the two environment lines below.
+      # - ./logs:/logs
+    # environment:
+    #   ZMP_LOG_DIR: /logs
     # command: ["-listen", ":47100", "-data", "/data", "-web", "/web"]
     logging:
       driver: json-file

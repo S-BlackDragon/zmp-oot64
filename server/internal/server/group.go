@@ -978,6 +978,8 @@ func (s *Server) checkHashesLocked(g *group, t int64) {
 	for _, i := range targets {
 		s.log.Printf("%s DESYNC tick=%d slot=%d hash=%016x leader slot=%d hash=%016x: RESYNC at %d",
 			s.groupLabel(g), t, i, hs[i], g.leader, lh, T)
+		s.logs.Event(g.room.Name, g.room.session, fmt.Sprintf("DESYNC group=%d scene=%d tick=%d slot=%d name=%q "+
+			"hash=%016x leader slot=%d hash=%016x: RESYNC at %d", g.id, g.scene, t, i, g.slots[i].name, hs[i], g.leader, lh, T))
 		g.blobReqs[i] = &blobReq{tick: T}
 		g.slots[i].hashFrom = T
 		g.resyncs++
