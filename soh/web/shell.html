@@ -4,7 +4,12 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ZMP · Ocarina of Time co-op</title>
-    <link rel="icon" href="data:,">
+    <!-- ZMP: the icon (branding-zmp), copied next to the page by web/make_web.py -->
+    <link rel="icon" href="favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" href="icons/icon-192.png" sizes="192x192">
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
+    <link rel="manifest" href="app.webmanifest">
+    <meta name="theme-color" content="#07090f">
     <style>
         :root {
             --bg: #07090f;
@@ -470,18 +475,27 @@
             return {
                 apply() {
                     const cfg = (window.Module && Module.zmp) || {};
-                    const target = parse(server.value);
-                    const roomName = room.value.trim() || "zmp";
+                    // (a site that fixes its server in zmp-config.json keeps it: the form only adds room and name)
+                    const locked = cfg.lockServer === "1" && !!cfg.host;
+                    const target = locked ? null : parse(server.value);
+                    const roomName = room.value.trim() || cfg.room || "zmp";
                     const playerName = name.value.trim();
-                    delete cfg.host;
-                    delete cfg.port;
-                    delete cfg.room;
+                    if (!locked) {
+                        delete cfg.host;
+                        delete cfg.port;
+                        delete cfg.room;
+                    }
                     if (target) {
                         cfg.host = target.host;
                         cfg.port = String(target.port);
-                        cfg.room = roomName;
                     }
-                    if (playerName) {
+                    if (cfg.host) {
+                        cfg.room = roomName;
+                        // (the form's server and room join at once, unless the player still has to type a password)
+                        const pwMissing = (cfg.passwordPolicy === "required") && !cfg.password;
+                        cfg.autojoin = cfg.invite || !pwMissing ? "1" : "0";
+                    }
+                    if (playerName && cfg.lockName !== "1") {
                         cfg.name = playerName;
                     }
                     if (window.Module) {

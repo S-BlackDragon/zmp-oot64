@@ -1,9 +1,10 @@
-"""Builds the zmp-server release binaries (static, no dependencies) into dist/.
+"""Builds the zmp-server and zmp-invite release binaries (static, no dependencies) into dist/.
 
-    python tools/build_server.py --version 0.6.2
+    python tools/build_server.py --version 0.7.0
 
 Runs the server's tests first, then cross-compiles for Windows x64, Linux x64 and Linux ARM64 (Raspberry Pi 4/5,
-ARM VPS). Needs Go 1.26 or newer.
+ARM VPS). Needs Go 1.26 or newer. The Windows zmp-server.exe carries the ZMP icon from
+server/cmd/zmp-server/rsrc_windows_amd64.syso (made by tools/make_icon_syso.py from branding-zmp/icono-zmp.ico).
 """
 
 from __future__ import annotations
@@ -32,11 +33,11 @@ def main() -> int:
             print("server tests failed: nothing built", file=sys.stderr)
             return 1
     lines = []
-    for goos, goarch, ext in TARGETS:
-        name = f"zmp-server-{args.version}-{goos}-{goarch}{ext}"
+    for (goos, goarch, ext), cmd_name in [(t, c) for c in ("zmp-server", "zmp-invite") for t in TARGETS]:
+        name = f"{cmd_name}-{args.version}-{goos}-{goarch}{ext}"
         env = dict(os.environ, GOOS=goos, GOARCH=goarch, CGO_ENABLED="0")
         cmd = ["go", "build", "-trimpath", "-ldflags", f"-s -w -X main.version={args.version}",
-               "-o", str(args.out / name), "./cmd/zmp-server"]
+               "-o", str(args.out / name), f"./cmd/{cmd_name}"]
         if subprocess.run(cmd, cwd=server, env=env).returncode != 0:
             print(f"build failed: {name}", file=sys.stderr)
             return 1

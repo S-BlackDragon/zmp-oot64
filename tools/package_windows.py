@@ -1,11 +1,14 @@
 """Builds the Windows player package dist/ZMP-<version>-windows.zip from the cpack zip of the distribution build.
 
-    python tools/package_windows.py --build <cpack zip> --version 0.6.2
+    python tools/package_windows.py --build <cpack zip> --version 0.7.0 \
+        --server dist/zmp-server-0.7.0-windows-amd64.exe --invite dist/zmp-invite-0.7.0-windows-amd64.exe
 
 Input: the zip that `cpack -G ZIP -C Release` writes for a build configured with -DZMP_HARNESS=OFF
 (see docs-zmp/en/build.md). Output: soh.exe, soh.o2r (Ship of Harkinian's own data), the ROM converter's descriptions
 (assets/), gamecontrollerdb.txt, the upstream readme, PLAYING.txt / JUGAR.txt, the license files and a first-run
-shipofharkinian.json that opens the ZMP room window with an EMPTY server address (each group types its own host).
+shipofharkinian.json that opens the ZMP room window with an EMPTY server address (each group types its own host),
+and the room server as zmp-server.exe (what "Host a game" starts, and a double-click server of its own) with the
+invite code tool zmp-invite.exe (tools/build_server.py builds both).
 
 Never includes a ROM, an oot.o2r or the debug symbols; tools/check_release.py runs on the result and the zip is
 deleted if it finds anything.
@@ -51,6 +54,8 @@ def main() -> int:
     ap.add_argument("--build", type=Path, required=True, help="cpack zip of the distribution build")
     ap.add_argument("--version", required=True)
     ap.add_argument("--out", type=Path, default=ROOT / "dist")
+    ap.add_argument("--server", type=Path, required=True, help="the Windows zmp-server build (tools/build_server.py)")
+    ap.add_argument("--invite", type=Path, required=True, help="the Windows zmp-invite build (tools/build_server.py)")
     args = ap.parse_args()
 
     name = f"ZMP-{args.version}-windows"
@@ -70,6 +75,9 @@ def main() -> int:
         raise SystemExit("the cpack zip has no soh.exe / soh.o2r at its root: is it the right zip?")
     if (stage / "readme.txt").exists():
         (stage / "readme.txt").rename(stage / "readme-ship-of-harkinian.txt")
+    # (next to soh.exe: "Host a game" looks for zmp-server.exe there)
+    shutil.copyfile(args.server, stage / "zmp-server.exe")
+    shutil.copyfile(args.invite, stage / "zmp-invite.exe")
     shutil.copy2(HERE / "PLAYING.txt", stage / "PLAYING.txt")
     shutil.copy2(HERE / "JUGAR.txt", stage / "JUGAR.txt")
     for dest, src in LICENSE_FILES.items():
@@ -90,7 +98,9 @@ def main() -> int:
         raise SystemExit("check_release found forbidden content; the zip was deleted")
     sha = hashlib.sha256(zpath.read_bytes()).hexdigest()
     exe = hashlib.sha256((stage / "soh.exe").read_bytes()).hexdigest()
-    (args.out / f"{name}.sha256.txt").write_text(f"{sha}  {zpath.name}\n{exe}  soh.exe\n", encoding="utf-8")
+    srv = hashlib.sha256((stage / "zmp-server.exe").read_bytes()).hexdigest()
+    (args.out / f"{name}.sha256.txt").write_text(f"{sha}  {zpath.name}\n{exe}  soh.exe\n{srv}  zmp-server.exe\n",
+                                                 encoding="utf-8")
     shutil.rmtree(stage)
     print(f"{zpath} ({zpath.stat().st_size / 1e6:.1f} MB) sha256 {sha}")
     print(f"soh.exe sha256 {exe} (every player of a room needs this same soh.exe)")

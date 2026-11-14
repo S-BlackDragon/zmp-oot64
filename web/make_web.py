@@ -10,6 +10,8 @@ Takes the Emscripten build of the game (see docs-zmp/en/build.md) and writes:
                         the ROM converter that runs in the player's browser tab
   LICENSE-ZMP.txt, LICENSING.md, licenses/   the license notices
   manifest.json         sizes, SHA-256 of each file and the build hash every player of a room must share
+  favicon.ico, icons/, app.webmanifest   the ZMP icon (branding-zmp) for the tab and the home screen
+  zmp-config.json       NOT written: a site that serves the page may add its own (docs-zmp/en/10-site-config.md)
 
 Nothing of the original game goes in: each player picks their own ROM in the page, it is converted in memory and
 never stored. The script refuses to write the folder if it finds a ROM, an extracted oot.o2r or anything that looks
@@ -73,6 +75,18 @@ def main() -> int:
     for dest, src in LICENSE_FILES.items():
         (out / dest).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / src, out / dest)
+    # the icon (branding-zmp): favicon, home-screen icons and the web app manifest the page links to
+    (out / "icons").mkdir()
+    shutil.copyfile(ROOT / "branding-zmp" / "icono-zmp.ico", out / "favicon.ico")
+    for size in (180, 192, 512):
+        shutil.copyfile(ROOT / "branding-zmp" / f"icono-zmp-{size}.png", out / "icons" / f"icon-{size}.png")
+    app = {"name": "ZMP - Ocarina of Time co-op", "short_name": "ZMP", "start_url": "./", "display": "standalone",
+           "background_color": "#07090f", "theme_color": "#07090f",
+           "icons": [{"src": f"icons/icon-{n}.png", "sizes": f"{n}x{n}", "type": "image/png"} for n in (192, 512)]}
+    (out / "app.webmanifest").write_text(json.dumps(app, indent=2), encoding="utf-8")
+    for name in ("favicon.ico", "app.webmanifest"):
+        data = (out / name).read_bytes()
+        manifest[name] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
     # the identity of this build in the room handshake: same soh.wasm = same hash (players must all use the same)
     manifest["build_hash"] = manifest["soh.wasm"]["sha256"][:16]
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
