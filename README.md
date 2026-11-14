@@ -23,9 +23,9 @@ included**: each player needs their own ROM.
 ZMP is **lockstep** multiplayer. Every player's PC runs the whole game, and every PC gets exactly the same inputs in
 the same order, so they all compute the same world. In the middle there is a small **relay server**, `zmp-server`,
 that puts everyone's buttons in order, passes them on and keeps each room's shared save. It does not run the game, so
-it is tiny (one 7 MB program, very little CPU and memory). **One of the players can run it on their own PC**, or on a
-cheap VPS, or over a virtual LAN like Tailscale or ZeroTier. There is no central ZMP server, no account and no
-sign-up: each group uses its own server.
+it is tiny (one 7 MB program, very little CPU and memory). **The game starts it for you** when you press **Host and
+play**; it can also run on its own on a spare PC, a cheap VPS, a relay, or over a virtual LAN like Tailscale or
+ZeroTier. There is no central ZMP server, no account and no sign-up: each group uses its own server.
 
 Consequences you should know:
 
@@ -38,23 +38,34 @@ Consequences you should know:
 1. **Download** `ZMP-<version>-windows.zip` from [Releases](../../releases/latest) and unzip it into a normal folder.
 2. **Open `soh.exe`** and, the first time, choose your Ocarina of Time ROM (`.z64`/`.n64`/`.v64`); the game builds
    its data from it in a minute or two. [Details](docs-zmp/en/02-your-rom.md)
-3. **Someone hosts**: runs `zmp-server` from the same release (double-click on Windows). [Hosting guides](#host-a-game)
-4. **Connect**: in the "Sala ZMP" (ZMP room) window, type the server address, port `47100`, a room name and your
-   name. The room's creator loads a save and presses "Conectar" (connect); the others press it from the file select.
-   [How to play](docs-zmp/en/03-play.md)
+3. **Someone hosts**: in the "Sala ZMP" (ZMP room) window, **Host** tab, presses **Host and play**, then **Copy
+   code**, sends the invite code to the friends, and loads a save. [Hosting guide](#host-a-game)
+4. **Friends join**: **Join** tab, paste the code, **Join with this code** (on the same home network the game also
+   appears in the "On your local network" list). [How to play](docs-zmp/en/03-play.md)
 5. **Play**: stay close or split up. A downed friend is revived by holding A next to them for 3 seconds.
 
 ## Host a game
 
-- [On your own PC](docs-zmp/en/04-host-on-your-pc.md), opening port 47100 on your router.
-- [With Tailscale or ZeroTier](docs-zmp/en/05-host-with-a-virtual-lan.md): no router changes, works behind CGNAT.
-- [On a VPS with Docker](docs-zmp/en/06-host-on-a-vps.md): always on (`docker compose up -d --build`).
+**[Press Host game and send the code to your friend](docs-zmp/en/00-host-and-send-the-code.md).** The game starts its
+own server, asks your router to open the port (UPnP, NAT-PMP or PCP), and shows an invite code (`ZMP-...`) and a
+`zmp://` link to send. A "From the internet" line says honestly whether friends on the internet can reach you. Rooms
+have a password (made up for you), which never travels in clear.
+
+If they cannot reach you (CGNAT, a router without UPnP), plan B:
+
+- [A PC that only hosts](docs-zmp/en/04-host-on-your-pc.md): `zmp-server.exe` with a double click, with its own page.
+- [Open the port by hand](docs-zmp/en/09-open-the-port-by-hand.md) on your router.
+- [Tailscale or ZeroTier](docs-zmp/en/05-host-with-a-virtual-lan.md): no router changes, works behind CGNAT.
+- [A relay](docs-zmp/en/11-relay.md): any `zmp-server` on the internet started with `-relay`.
+- [A VPS with Docker](docs-zmp/en/06-host-on-a-vps.md): always on (`docker compose up -d --build`).
+- [wss:// for browsers](docs-zmp/en/12-wss-for-browsers.md) on `https` pages.
 
 ## Browser mode
 
-The same game compiled to WebAssembly: play in Chrome, Edge or Firefox without installing anything. The host starts
-the server with the browser build (`zmp-server -web <folder>`), friends open `http://<host>:47100/`, type a room and a
-name, and pick their ROM from their own computer; it is converted in the tab's memory and never uploaded or stored.
+The same game compiled to WebAssembly: play in Chrome, Edge or Firefox without installing anything. A browser cannot
+host: someone runs a server with the browser build (`zmp-server -web <folder>`), friends open `http://<host>:47100/`,
+type a room and a name (or open the page with an invite code), and pick their ROM from their own computer; it is
+converted in the tab's memory and never uploaded or stored. A site can preset its server with a `zmp-config.json`.
 [Browser mode guide](docs-zmp/en/07-browser-mode.md)
 
 ## Status
@@ -71,7 +82,8 @@ instances in one room):
 
 In progress: a full game with six players over the internet, and a long session in the browser.
 
-Known limits: ZMP's own in-game windows and messages are in Spanish; the desktop game is Windows only; up to 6
+Known limits: ZMP's multiplayer screens are in English and Spanish (they follow the system language), but some
+status and chat lines are still only in Spanish; the desktop game is Windows only; up to 6
 players per room; desktop and browser players cannot share a room; no text chat; texture and model packs are not
 supported in multiplayer; one Navi per room (the room creator's).
 
@@ -86,7 +98,7 @@ Next to it:
 | [`server/`](server/) | `zmp-server`, the room/relay server (Go): TCP for the desktop game and WebSocket for the browser on one port, optional static files for the browser page. Dockerfile and compose file in `server/deploy/`. |
 | [`web/`](web/) | `make_web.py`: packs the browser build into a folder to serve. |
 | [`tools/`](tools/) | Packaging (`package_windows.py`), server binaries (`build_server.py`), the release check that no ROM data is shipped (`check_release.py`), and the guides that go into the zip. |
-| [`docs-zmp/`](docs-zmp/) | ZMP's guides in [English](docs-zmp/en/README.md) and [Spanish](docs-zmp/es/README.md): get the game, your ROM, play, host (PC, virtual LAN, VPS), browser mode, troubleshooting, building, releasing. (`docs/` is Ship of Harkinian's.) |
+| [`docs-zmp/`](docs-zmp/) | ZMP's guides in [English](docs-zmp/en/README.md) and [Spanish](docs-zmp/es/README.md): get the game, your ROM, host and send the code, play, plan B hosting (double-click server, router, virtual LAN, relay, VPS, wss), browser mode, the web version on your site, troubleshooting, building, releasing. (`docs/` is Ship of Harkinian's.) |
 
 ## Building
 

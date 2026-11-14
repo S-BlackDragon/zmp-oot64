@@ -2,36 +2,52 @@
 
 [English](../en/03-play.md) | **Español**
 
-Antes de empezar, el anfitrión del grupo da a todos tres cosas:
+La forma más rápida de entrar en una partida es un **código de invitación** del anfitrión: consulta
+[Pulsa Alojar partida y pásale el código a tu amigo](00-host-and-send-the-code.md). Esta página explica todas las
+formas de unirse y cómo funciona el cooperativo una vez dentro.
 
-- la **dirección del servidor** (una IP como `203.0.113.10`, un nombre como `my-pc.tailnet-name.ts.net` o un dominio);
-- el **puerto**, normalmente `47100`;
-- el nombre de la **sala** (cualquier palabra en la que se pongan de acuerdo; todos escriben la misma).
+## La ventana de ZMP
 
-Las ventanas y los mensajes propios de ZMP dentro del juego están en **español** por ahora (el resto de Ship of
-Harkinian está en inglés). Las etiquetas que necesitas se explican abajo.
+La ventana **"Sala ZMP"** se abre sola la primera vez. Si la cerraste: pulsa **Esc**, ve a **Network > ZMP** y pulsa
+**"Mostrar u ocultar ventana de sala"**.
 
-## Conectar (escritorio)
+Sus pestañas y mensajes siguen el idioma de Windows (español o inglés); se cambia en **Perfil > Idioma**. El juego
+escribe sus textos sin tildes (su tipo de letra no las tiene). Algunas cosas solo están en español: los avisos del
+grupo en pantalla y los ajustes de la parte de abajo de **Avanzado**.
 
-Cuando arranca el juego ves la ventana **"Sala ZMP"**. Si no la ves (o la cerraste): pulsa **Esc** para abrir el menú,
-ve a **Network > ZMP** (Red > ZMP) y pulsa **"Mostrar u ocultar ventana de sala"**. En la ventana de la sala:
+- **Unirse**: entrar en una partida (con un código, desde tu red local o por dirección).
+- **Alojar**: alojar una partida en este PC ([guía](00-host-and-send-the-code.md)).
+- **Perfil**: tu **nombre** (se ve sobre tu Link; distinto del de todos los demás) y el idioma. Puedes cambiar el
+  nombre en plena partida: pulsa **Cambiar nombre** y todos ven el nuevo al instante.
+- **Avanzado**: el puerto por defecto, una contraseña de servidor, los enlaces `zmp://`, el autoguardado, reanudar,
+  el cuadro de mensajes.
 
-| Campo | Significado | Qué escribir |
-|---|---|---|
-| Servidor (host) | La dirección del servidor al que te conectas | la dirección que te dio el anfitrión |
-| Puerto | El puerto del servidor | `47100` salvo que te digan otro |
-| Sala | La sala a la que entras | el nombre de la sala, el mismo para todos |
-| Nombre | Cómo te identificas en la sala | tu nombre; distinto del de todos los demás (se muestra sobre tu Link) |
-| Unirse a (opcional) | Con quién quieres aparecer al entrar | el nombre de un jugador junto al que quieras aparecer |
+## Unirse a una partida
 
-Después pulsa **"Conectar"**.
+Quédate en la pantalla de selección de partida (no cargues ninguna), pon tu nombre en **Perfil** y usa una de las
+tres secciones de **Unirse**:
 
-- **El primer jugador (el creador de la sala)** carga su archivo de partida (o empieza una nueva) y, ya dentro del
-  juego, pulsa **Conectar**. La primera vez, esa partida pasa a ser la partida de la sala: el servidor la guarda y la
-  actualiza mientras juegan.
-- **Todos los demás** pulsan **Conectar** desde la pantalla de selección de archivo (no hace falta cargar una
-  partida). En pocos segundos apareces en el mundo, en la zona donde esté la mayoría de los jugadores (o junto al
-  jugador que indicaste en "Unirse a").
+1. **Unirse con codigo**: pega el código de invitación (`ZMP-...`) o un enlace `zmp://` y pulsa **Unirse con este
+   codigo**. Si el anfitrión eligió poner en el código solo una pista de la contraseña, el juego muestra "El anfitrion
+   dejo una pista de la contrasena: ...": escribe la contraseña en la casilla **Contrasena** (en Por direccion) y
+   vuelve a pulsar el botón.
+2. **En tu red local**: las partidas alojadas en tu red de casa aparecen aquí solas (sala, anfitrión, jugadores y si
+   tiene contraseña). Si la tiene, escríbela antes en la casilla **Contrasena** de abajo y luego pulsa **Entrar** en
+   esa fila.
+3. **Por direccion**: para servidores cuya dirección conoces.
+   - **Servidor**: lo que te dio el anfitrión. Vale: `host`, `host:puerto`, una IP, `[IPv6]:puerto`, `ws://...` o
+     `wss://...`. Sin puerto, el juego usa el 47100 (o el que pongas en Avanzado).
+   - **Sala**: el nombre de la sala, el mismo para todos.
+   - **Contrasena (opcional)**: la contraseña de la sala, si tiene.
+   - **Recientes**: los servidores y salas que usaste antes; pulsa uno para rellenar los campos, `x` para olvidarlo.
+   - Pulsa **Conectar**.
+
+Mientras estás en una sala, la pestaña Unirse muestra dónde estás, los jugadores con su estado y su conexión, y un
+botón **Desconectar**.
+
+**Quién empieza la partida**: el primer jugador que carga una partida (normalmente el anfitrión) crea el grupo; esa
+partida pasa a ser la de la sala y el servidor la guarda. Todos los que están conectados en la pantalla de selección
+de partida, o se conectan después, aparecen en el mundo en pocos segundos, en la zona donde está la mayoría.
 
 ## Cómo funciona el cooperativo
 
@@ -50,11 +66,11 @@ Después pulsa **"Conectar"**.
 - **Caer y reanimar**: sin un hada en una botella, un Link sin salud queda **caído** en lugar de provocar el fin de
   partida, y mira la cámara de un amigo (C-izquierda / C-derecha para cambiar). Para reanimar a un amigo, ponte junto
   a su Link y **mantén A durante 3 segundos**. Solo si **todos** los de la zona están caídos aparece el fin de partida;
-  el creador de la sala elige continuar para el grupo.
+  quien creó el grupo elige continuar para todos.
 - **Hablar, leer carteles y la ocarina** son por jugador: cada uno tiene su propio cuadro de texto.
-- **Cofres y objetos**: la escena del cofre y el mensaje "You got..." (has conseguido...) son solo tuyos; los demás reciben un
-  aviso breve.
-- **Las escenas de jefe y de historia** las ve todo el mundo a la vez. El creador de la sala puede saltarse las escenas
+- **Cofres y objetos**: la escena del cofre y el mensaje "You got..." (has conseguido...) son solo tuyos; los demás
+  reciben un aviso breve.
+- **Las escenas de jefe y de historia** las ve todo el mundo a la vez. Quien creó el grupo puede saltarse las escenas
   de historia con START.
 - **Las puertas de jefe** esperan a todos los jugadores de la mazmorra para que entren juntos.
 - **Fuego amigo**: las explosiones (bombas, bombchus, flores bomba) hieren a todos los Link cercanos, como en el
@@ -62,25 +78,35 @@ Después pulsa **"Conectar"**.
 - **Las canciones de teletransporte y los portales azules** llevan solo al jugador que los usa; los amigos cercanos
   reciben un aviso durante 10 segundos y quien **mantenga L** durante cerca de un segundo se va con él.
 - **Edad**: sacar o devolver la Espada Maestra cambia la edad de toda la sala.
-- **Navi**: hay una sola Navi, la del creador de la sala. Los demás Link fijan objetivo con Z sin hada.
-- **Desconexiones**: si alguien se desconecta, su Link se queda quieto. Al reconectarse con el **mismo nombre** y la
-  misma sala, lo recupera. Una conexión lenta no congela a los demás: ese Link repite su última entrada hasta que se
-  pone al día.
+- **Navi**: hay una sola Navi, la de quien creó el grupo. Los demás Link fijan objetivo con Z sin hada.
+- **Desconexiones**: si alguien se desconecta, su Link se queda quieto. Al volver a conectarse a la misma sala desde
+  el mismo juego, lo recupera (el juego guarda su propia clave de jugador, así que funciona aunque haya cambiado de
+  nombre). Una conexión lenta no congela a los demás: ese Link repite su última entrada hasta que se pone al día.
 - **Desincronización**: si alguna vez los PC no coinciden, el juego lo detecta solo y lo corrige en un momento (puede
   que veas "DESYNC: resincronizado"). No hay que hacer nada.
 
 ## Guardar
 
 - El **servidor** guarda el progreso compartido de cada sala (objetos, rupias, cofres, llaves, lo que han hecho, la
-  hora del día) en cuanto cambia. Si el servidor se reinicia, las ventanas se reconectan solas en unos segundos y se
-  sigue jugando.
-- Solo el **PC del creador de la sala** escribe un archivo de partida (desde el menú de pausa o con el autoguardado,
-  cada 5 minutos por defecto; "Autoguardado cada (minutos)" en la ventana de la sala). También guarda el equipo de
-  cada amigo por nombre.
-- Para volver exactamente donde estaban: el creador de la sala marca **"Reanudar sesion"** antes de conectarse, en la
-  misma sala; los demás se unen como siempre con los mismos nombres.
-- Para **empezar la sala de nuevo** con otra partida: usa otro nombre de sala, o el creador marca **"Empezar la sala
-  con mi partida"** antes de conectarse; eso borra el progreso de esa sala en el servidor.
+  hora del día) en cuanto cambia. Si el servidor se reinicia, los juegos se reconectan solos en unos segundos y se
+  sigue jugando. Cuando alojas desde el juego, los datos de ese servidor están en la carpeta `zmp-host` de la carpeta
+  del juego.
+- Solo el PC de **quien creó el grupo** escribe un archivo de partida (desde el menú de pausa o con el autoguardado,
+  cada 5 minutos por defecto). También guarda el equipo de cada amigo por nombre.
+- Los ajustes de esto están en la parte de abajo de **Avanzado**:
+
+| Ajuste | Qué hace |
+|---|---|
+| Autoguardado cada (minutos, 0 = nunca) | cada cuántos minutos se guarda solo (0 = nunca) |
+| Reanudar sesion | quien crea el grupo carga la última sesión guardada de esta sala |
+| Unirse a (nombre de un jugador, opcional) | al conectar, apareces junto a ese jugador (opcional) |
+| Empezar la sala con mi partida | empieza la sala de nuevo con tu partida (borra el progreso de la sala en el servidor) |
+
+- Para volver exactamente donde estaban: aloja (o entra en) la **misma sala** que la última vez; quien crea el grupo
+  marca **Reanudar sesion** antes de conectarse; los demás entran como siempre. (Si el anfitrión deja vacío el nombre
+  de la sala, el juego se inventa uno nuevo cada vez: escribe uno en la pestaña Alojar para conservarlo.)
+- Para **empezar la sala de nuevo** con otra partida: usa otro nombre de sala, o marca **Empezar la sala con mi
+  partida** antes de conectarte.
 - Los guardados rápidos de Ship of Harkinian (F5/F7) y su propio autoguardado están desactivados mientras se juega en
   grupo.
 
@@ -93,9 +119,10 @@ de Ship of Harkinian, donde puedes reasignar todo.
 ## Cuadro de mensajes y diagnóstico
 
 Los avisos del grupo (quién entra o sale, quién consiguió qué, guardados, errores) aparecen en un cuadro abajo a la
-izquierda y se desvanecen. En la ventana de la sala, en la sección "Cuadro de mensajes", puedes moverlo, cambiarle el
-tamaño, cambiar la fuente y el color, u ocultarlo. Ahí también puedes activar la línea de diagnóstico ("Nombre | tick
-1234 | D=2 | HASH OK": tu juego y el de todos los demás coinciden).
+izquierda y se desvanecen. En la parte de abajo de **Avanzado** puedes ocultarlo ("Ocultar el cuadro de mensajes"),
+cambiar cuántas líneas muestra ("Lineas visibles"), el color del texto ("Color del texto") y qué mensajes ver ("Que
+mensajes ver"). Ahí también puedes activar la línea de diagnóstico de arriba ("Mostrar la linea de diagnostico";
+"Nombre | tick 1234 | D=2 | HASH OK" quiere decir que tu juego y el de todos los demás coinciden).
 
 ## Por favor, no hagas esto
 

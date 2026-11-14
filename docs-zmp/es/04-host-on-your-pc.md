@@ -1,82 +1,129 @@
-# 4. Hospedar en tu propio PC (redirección de puertos)
+# 4. Plan B: un PC que solo aloja (zmp-server con doble clic)
 
 [English](../en/04-host-on-your-pc.md) | **Español**
 
-Una persona del grupo ejecuta el servidor de salas, `zmp-server`. Es un único programa pequeño: no ejecuta el juego,
-solo ordena y reenvía las entradas de todos y guarda las partidas de las salas, así que casi no usa CPU, memoria ni
-ancho de banda. El anfitrión puede jugar en el mismo PC al mismo tiempo.
+Lo normal es que el anfitrión pulse **Alojar y jugar** en el juego ([guía principal](00-host-and-send-the-code.md)).
+Usa el servidor por separado cuando un PC deba alojar **sin jugar**: un PC de casa siempre encendido, un portátil que
+no usas, un mini PC. Es el mismo `zmp-server` que usa el juego, con una pequeña página propia que muestra el código de
+invitación.
 
-Si no puedes (o no quieres) cambiar los ajustes de tu router, usa en su lugar [Tailscale o ZeroTier](05-host-with-a-virtual-lan.md):
-suele ser más fácil.
+El servidor nunca ejecuta el juego: solo ordena y reenvía los botones de todos y guarda las partidas compartidas de
+las salas, así que casi no usa CPU, memoria ni ancho de banda.
 
-## 1. Ejecutar el servidor
+## 1. Arrancarlo
 
-1. Pon `zmp-server-<version>-windows-amd64.exe` en una carpeta propia, por ejemplo `C:\Games\ZMP-server`, y
-   renómbralo `zmp-server.exe` si quieres.
-2. Haz doble clic. Se abre una ventana de consola y muestra una línea como
-   `zmp-server 0.6.2 protocol 4 listening on [::]:47100 (tcp and websocket)`. Mantén esa ventana abierta mientras
-   juegas; si la cierras, el servidor se detiene.
-3. La primera vez, el **Firewall de Windows** te pregunta si permitirlo: permítelo en **redes privadas** (y en redes
-   públicas solo si tu red doméstica está marcada como pública).
+1. Coge `zmp-server.exe` del zip de Windows (está junto a `soh.exe`), o descarga
+   `zmp-server-<version>-windows-amd64.exe` de la versión publicada. Ponlo en **una carpeta solo para él**, por
+   ejemplo `C:\Juegos\ZMP-servidor`: escribe sus archivos junto a sí mismo.
+2. **Haz doble clic.** Se abren dos cosas:
+   - una ventana de consola: es el registro del servidor. Déjala abierta mientras juegan; si la cierras, el servidor
+     se para;
+   - una página en tu navegador, en `http://127.0.0.1:<puerto>/`, con el código de invitación. Solo este PC puede
+     abrir esa página. Si el navegador no se abre, la consola muestra la dirección de la página: ábrela a mano.
+3. La primera vez, el **Firewall de Windows** pregunta si permites `zmp-server`: permítelo (en redes privadas, y
+   también en públicas si tu red de casa está marcada como "Pública").
 
-El servidor escribe las partidas compartidas de las salas en una carpeta `data` junto a él. Para usar otro puerto u
-otra carpeta, inícialo desde una terminal: `zmp-server.exe -listen :47100 -data C:\Games\ZMP-server\data`.
-`zmp-server.exe -version` muestra su versión.
+El primer arranque crea, junto al programa:
 
-En Linux o en una Raspberry Pi: `./zmp-server-<version>-linux-amd64` (o `-linux-arm64`), con las mismas opciones. Para mantenerlo
-en marcha en segundo plano, consulta [Hospedar en un VPS](06-host-on-a-vps.md).
+- `zmp-server.toml`: sus ajustes, con un **nombre de sala al azar** y una **contraseña al azar de 8 caracteres**;
+- `data\`: las partidas compartidas de las salas y sus claves.
 
-## 2. Quién se conecta a qué
+Después escucha en todas las tarjetas de red en el puerto **47100**, pide a tu router que abra ese puerto (UPnP,
+NAT-PMP o PCP) y anuncia su sala en tu red local (así aparece en la lista **Unirse > En tu red local** del juego).
 
-| Quién | Dirección del servidor que debe escribir |
+## 2. La página
+
+| Parte | Qué hace |
 |---|---|
-| Tú, en el PC que ejecuta el servidor | `127.0.0.1` |
-| Alguien en tu red doméstica (el mismo router) | la dirección local de tu PC, por ejemplo `192.168.0.20` (ver abajo) |
-| Amigos por internet | tu dirección **pública**, después del paso 3 |
+| **Código de invitación** | El código, con **Copiar código** y **Copiar enlace**, y las direcciones que lleva dentro. Los amigos lo pegan en la pestaña Unirse del juego. |
+| **Desde internet** | Si los amigos de internet pueden llegar a este PC, con consejos; los mismos mensajes que en el juego ([qué significan](00-host-and-send-the-code.md#qué-quiere-decir-la-línea-desde-internet)). |
+| **Sala y contraseña** | **Sala**: cámbiale el nombre (**Cambiar**). **Contraseña**: **Ver**, **Cambiar**, **Nueva al azar**, **Quitar**. |
+| **El código lleva** | **la contraseña** (los amigos entran sin escribir nada), **solo una pista** (escriben la contraseña; la pista les ayuda) o **nada (la piden al entrar)**. Pulsa **Guardar**. Elige "solo una pista" si vas a publicar el código en algún sitio público. |
+| **Jugadores** | Quién está dentro, su estado y su ping. |
+| **Parar** | Para el servidor (pregunta antes). |
 
-Puerto: `47100` en todos los casos. Tu dirección local: abre una terminal (Win+R, `cmd`) y ejecuta `ipconfig`; es la
-"Dirección IPv4" de tu adaptador de red.
+La página tiene arriba un selector de idioma (Español / English).
 
-## 3. Abrir el puerto en tu router
+Para jugar también en ese mismo PC: abre el juego y pega el código (o pulsa la sala en **En tu red local**).
 
-Los amigos por internet solo pueden llegar a tu PC si tu router redirige el puerto hacia él:
+**Parar**: pulsa **Parar** en la página, pulsa Ctrl+C en la consola o cierra la consola. El servidor quita la regla
+que había pedido al router. Los jugadores se desconectan; el progreso de la sala se queda en `data\`.
 
-1. Dale a tu PC una dirección local fija: en el router, busca la opción "reserva DHCP" / "asignación estática" y
-   reserva para tu PC la dirección local actual (si no, puede cambiar y la redirección deja de funcionar).
-2. Busca **Redirección de puertos** (también llamada "Servidor virtual", "NAT" o "Asignación de puertos") en los
-   ajustes del router (normalmente en `http://192.168.0.1` o `http://192.168.1.1`; la dirección y la contraseña suelen
-   estar en una pegatina del router).
-3. Añade una regla: **TCP**, puerto externo **47100**, puerto interno **47100**, hacia la dirección local de tu PC.
-4. Averigua tu dirección pública (busca "cuál es mi IP" en un navegador) y envíasela a tus amigos junto con el puerto
-   y el nombre de la sala.
-5. Pruébalo: pide a un amigo que se conecte. (Probar desde tu propio PC con tu dirección pública puede no funcionar en
-   algunos routers; eso no significa que esté mal para los demás.)
+Este servidor aloja **solo su propia sala**: quien pida otro nombre de sala recibe "Ese servidor no tiene esa sala".
 
-Si no funciona:
+## 3. El archivo de ajustes
 
-- Si la dirección "WAN" o "Internet" del router es distinta de la dirección pública que muestra el navegador, o empieza
-  por `100.64` hasta `100.127`, tu proveedor de internet usa **CGNAT** y la redirección de puertos no puede funcionar.
-  Usa [Tailscale o ZeroTier](05-host-with-a-virtual-lan.md), o un [VPS](06-host-on-a-vps.md).
-- Comprueba que la ventana del servidor sigue abierta y que el Firewall de Windows lo permitió.
+`zmp-server.toml` es un archivo de texto; edítalo con el Bloc de notas **con el servidor parado**. La página ya te
+cambia la sala, la contraseña y lo que lleva el código; lo demás está aquí. Una clave desconocida se avisa en el
+registro y se ignora.
 
-## 4. Seguridad
+| Clave | Por defecto | Qué hace |
+|---|---|---|
+| `listen` | `":47100"` | Dónde escucha. `":47101"` para otro puerto; `"127.0.0.1:47100"` solo para este PC (sin router). |
+| `data` | `"data"` | La carpeta de datos, relativa al archivo. |
+| `server_name` | vacío | El nombre que se ve en la lista de la red local. |
+| `room`, `password` | al azar | La sala y su contraseña (contraseña vacía = sin contraseña). |
+| `invite_secret`, `hint` | `"password"` | Qué lleva el código: `"password"`, `"hint"` o `"none"`, y el texto de la pista. |
+| `port_mapping` | `true` | Pedir al router que abra el puerto. `false` si lo abres a mano ([guía](09-open-the-port-by-hand.md)). |
+| `public_address` | vacío | Un dominio, una IP pública fija o una dirección `wss://` que va **la primera** en el código. Úsala si abres el puerto a mano, tienes un dominio o pones un [proxy wss](12-wss-for-browsers.md) delante. |
+| `open_browser` | `true` | Abrir la página al arrancar. |
+| `ui_listen` | vacío | Dónde se sirve la página; siempre en `127.0.0.1`. |
+| `lan_announce` | `true` | Anunciar la sala en tu red local (UDP, puerto 47100, nunca fuera de tu red). |
+| `lan_port`, `lan_address` | `47100`, vacío | El puerto UDP del anuncio y, solo para pruebas, una dirección a la que mandarlo. |
 
-- El servidor no tiene cuentas ni contraseñas: **cualquiera que conozca tu dirección, el puerto y el nombre de la sala
-  puede entrar en esa sala**. Usa un nombre de sala que no sea fácil de adivinar y dáselo solo a las personas con las
-  que juegas.
-- Solo se abre el puerto `47100`, y solo `zmp-server` escucha en él. Nunca ejecuta el juego, nunca recibe de los
-  jugadores otros archivos que no sean el estado del juego y nunca guarda nada fuera de su carpeta `data`.
-- Cuando termines de jugar, cierra la ventana del servidor y quita la regla de redirección si no vas a hospedar de
-  nuevo.
+Las claves de servidor de la sección siguiente (`require_room_password`, `server_password`, `max_rooms`, `relay`...)
+también funcionan en este archivo.
 
-## 5. También jugadores de navegador
+## 4. Linux, una Raspberry Pi, o sin página
 
-El mismo servidor y el mismo puerto atienden también a los jugadores de navegador (WebSocket). Para que tus amigos
-jueguen en el navegador sin instalar nada, inicia el servidor con la versión para navegador: consulta [Modo
-navegador](07-browser-mode.md).
+- En Linux (`zmp-server-<version>-linux-amd64`, o `-linux-arm64` para una Raspberry Pi 4/5), `zmp-server -app` hace lo
+  mismo que el doble clic: el archivo de ajustes junto al programa, el router, el anuncio en la red local y la página
+  en `127.0.0.1`. Añade `-no-browser` en una máquina sin escritorio (la consola muestra la dirección de la página);
+  `-config <archivo>` lee otro archivo de ajustes.
+- Con cualquier opción en la línea de órdenes (por ejemplo `zmp-server.exe -listen :47100`), el servidor funciona como
+  servidor simple: sin archivo de ajustes junto a él, sin router, sin página y con cualquier nombre de sala. Es el modo
+  para un VPS ([guía de Docker](06-host-on-a-vps.md)), un [relé](11-relay.md) y la
+  [página del navegador](07-browser-mode.md) (`-web`).
+
+Opciones del servidor simple. Cada una puede venir también de una variable de entorno o de un archivo indicado con
+`-config <archivo>` (gana la línea de órdenes, luego la variable, luego el archivo):
+
+| Opción | Variable | Clave del archivo | Por defecto |
+|---|---|---|---|
+| `-listen` | `ZMP_LISTEN` | `listen` | `:47100` |
+| `-data` | `ZMP_DATA` | `data` | `./data` |
+| `-name` | `ZMP_SERVER_NAME` | `server_name` | vacío |
+| `-server-password-file` | `ZMP_SERVER_PASSWORD_FILE` o `ZMP_SERVER_PASSWORD` | `server_password_file` o `server_password` | sin contraseña de servidor |
+| `-require-room-password` | `ZMP_REQUIRE_ROOM_PASSWORD` | `require_room_password` | `false` |
+| `-max-rooms` | `ZMP_MAX_ROOMS` | `max_rooms` | 0 = sin límite |
+| `-max-conns-per-ip` | `ZMP_MAX_CONNS_PER_IP` | `max_conns_per_ip` | 0 = sin límite |
+| `-max-rooms-per-ip` | `ZMP_MAX_ROOMS_PER_IP` | `max_rooms_per_ip` | 0 = sin límite |
+| `-list-rooms` | `ZMP_LIST_ROOMS` | `list_rooms` | `false` |
+| `-room-key-ttl` | `ZMP_ROOM_KEY_TTL` | `room_key_ttl` (`30m`, `12h`, `7d`) | nunca |
+| `-relay` | `ZMP_RELAY` | `relay` | `false` ([guía del relé](11-relay.md)) |
+| `-web <carpeta>` | | | servir la [versión para navegador](07-browser-mode.md) en el mismo puerto |
+| `-version` | | | muestra la versión y el número de protocolo |
+
+En un servidor simple, el primer jugador que entra en una sala con contraseña fija la contraseña de esa sala; todos
+los que vengan después la necesitan.
+
+## 5. Contraseñas y seguridad
+
+- Las contraseñas de sala nunca viajan en claro: el juego demuestra que conoce la contraseña, y el servidor solo guarda
+  una clave derivada de ella (en `data\room_keys.json`).
+- Una **contraseña de servidor** (`server_password` en el archivo, o `ZMP_SERVER_PASSWORD`; nunca en la línea de
+  órdenes, donde otros programas podrían leerla) cierra el servidor entero: los jugadores la escriben en el juego en
+  **Avanzado > Contrasena del servidor (si tiene)**.
+- Tras 5 contraseñas incorrectas en un minuto desde una dirección, esa dirección espera 60 segundos ("Demasiados
+  intentos fallidos").
+- Los juegos antiguos (ZMP 0.6.x, protocolo 4) pueden seguir entrando en salas **sin** contraseña de este servidor, si
+  tienen la misma versión que la sala. No pueden entrar en salas con contraseña ni en servidores con contraseña de
+  servidor.
+- Se usa un solo puerto TCP (47100 por defecto) para el juego, la versión para navegador y la comprobación
+  `http://<dirección>:47100/healthz`.
 
 ## Cuántos jugadores y a qué distancia
 
-Hasta **6 jugadores** por sala, y varias salas a la vez en el mismo servidor. Lockstep espera a la conexión más lenta,
-así que se juega mejor cuando todos están en la misma región (el mismo país o países vecinos). El servidor adapta el
-retraso de entrada a las conexiones cada pocos segundos.
+Hasta **6 jugadores** por sala. Lockstep espera a la conexión más lenta, así que se juega mejor cuando todos están en
+la misma región (el mismo país o países vecinos). El servidor ajusta el retraso de entrada a las conexiones cada pocos
+segundos.

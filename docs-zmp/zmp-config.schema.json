@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zmp-config.json (ZMP web version, site configuration, version 1)",
+  "description": "Optional file next to the web version's files. Guide: docs-zmp/en/10-web-version-on-your-site.md. Unknown keys and bad values are ignored with a notice.",
+  "type": "object",
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "servers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": { "type": "string" },
+          "address": { "type": "string", "maxLength": 255, "pattern": "^(wss?://\\S+|(\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9._-]+)(:[0-9]{1,5})?)$" },
+          "default": { "type": "boolean" }
+        },
+        "required": ["address"]
+      }
+    },
+    "lockServer": { "type": "boolean" },
+    "room": {
+      "oneOf": [
+        { "const": "ask" },
+        { "type": "string", "minLength": 1, "maxLength": 64 },
+        {
+          "type": "object",
+          "properties": {
+            "default": { "type": "string", "maxLength": 64 },
+            "ask": { "type": "boolean" },
+            "suggestRandom": { "type": "boolean" },
+            "lock": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "password": {
+      "type": "object",
+      "properties": {
+        "policy": { "enum": ["none", "ask", "optional", "required", "given"] },
+        "value": { "type": "string", "maxLength": 64 },
+        "fromUrlFragment": { "type": "boolean" }
+      },
+      "required": ["policy"]
+    },
+    "name": {
+      "type": "object",
+      "properties": { "default": { "type": "string", "maxLength": 32 }, "lock": { "type": "boolean" } }
+    },
+    "assets": { "type": "object", "properties": { "remember": { "enum": ["ask", "never"] } } },
+    "ui": {
+      "type": "object",
+      "properties": {
+        "language": { "enum": ["auto", "es", "en"] },
+        "title": { "type": "string", "maxLength": 80 },
+        "showHostHelp": { "type": "boolean" }
+      }
+    },
+    "url": {
+      "type": "object",
+      "properties": {
+        "allow": { "type": "array", "items": { "enum": ["server", "room", "name", "lang", "autojoin", "invite", "pw"] } }
+      }
+    },
+    "embed": { "type": "object", "properties": { "parentOrigins": { "type": "array", "items": { "type": "string" } } } },
+    "updates": {
+      "type": "object",
+      "properties": { "check": { "type": "boolean" }, "source": { "type": "string", "pattern": "^https://\\S+$" } }
+    }
+  }
+}

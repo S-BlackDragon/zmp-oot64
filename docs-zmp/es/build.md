@@ -9,7 +9,7 @@ Todo lo necesario está en este repositorio:
 | raíz (`soh/`, `libultraship/`, `torch/`, `CMakeLists.txt`...) | el juego: Ship of Harkinian con ZMP (`soh/soh/Zmp/`), libultraship y torch como carpetas normales | CMake + Visual Studio (Windows), Emscripten (navegador) |
 | `server/` | `zmp-server`, el servidor de salas | Go |
 | `web/` | `make_web.py`: convierte la compilación del navegador en una carpeta que se puede servir | Python 3 |
-| `tools/` | `package_windows.py` (zip para jugadores), `build_server.py` (binarios del servidor), `check_release.py` (sin datos de ROM en una versión publicada) | Python 3 |
+| `tools/` | `package_windows.py` (zip para jugadores), `build_server.py` (binarios del servidor y de la herramienta de códigos), `make_icon_syso.py` (el icono de Windows del servidor), `check_release.py` (sin datos de ROM en una versión publicada) | Python 3 |
 
 No hace falta ninguna ROM ni datos del juego para compilar; solo se necesitan para jugar.
 
@@ -45,10 +45,11 @@ Empaquétalo como una versión publicada (no puede acabar ningún dato de ROM en
 
 ```powershell
 cd build\win; cpack -G ZIP -C Release; cd ..\..
-python tools\package_windows.py --build (Get-ChildItem _packages\*.zip | Select-Object -First 1).FullName --version 0.6.2
+python tools\package_windows.py --build (Get-ChildItem _packages\*.zip | Select-Object -First 1).FullName --version 0.7.0
 ```
 
-El resultado es `dist\ZMP-0.6.2-windows.zip`. Todos los jugadores de una sala necesitan el mismo `soh.exe`, así que da
+Con `--server ...` mete también `zmp-server.exe` y `zmp-invite.exe` en el zip ([release.md](release.md)). El
+resultado es `dist\ZMP-0.7.0-windows.zip`. Todos los jugadores de una sala necesitan el mismo `soh.exe`, así que da
 a tus amigos este zip en lugar de dejar que cada uno compile el suyo.
 
 ## Juego para navegador
@@ -80,15 +81,17 @@ Requisitos: Go 1.26 o más reciente.
 cd server
 go test ./...
 go build -o zmp-server.exe ./cmd/zmp-server
+go build -o zmp-invite.exe ./cmd/zmp-invite
 ```
 
-Todos los binarios de la versión publicada (Windows, Linux x64, Linux ARM64, estáticos, sin dependencias) de una vez:
+Pon los dos junto a `soh.exe` para el botón **Alojar y jugar** del juego. Todos los binarios de la versión publicada
+(Windows, Linux x64, Linux ARM64, estáticos, sin dependencias) de una vez:
 
 ```powershell
-python tools\build_server.py --version 0.6.2
+python tools\build_server.py --version 0.7.0
 ```
 
-Se escriben en `dist\`. La imagen de Docker se compila desde el código fuente: consulta [Hospedar en un VPS](06-host-on-a-vps.md).
+Se escriben en `dist\`. La imagen de Docker se compila desde el código fuente: consulta [VPS con Docker](06-host-on-a-vps.md).
 
 ## Linux y macOS
 

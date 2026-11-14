@@ -4,23 +4,38 @@ ZMP - cooperativo en linea para The Legend of Zelda: Ocarina of Time
 Hasta 6 jugadores, cada uno con su propio Link de verdad, todos viendo exactamente el mismo mundo. Hecho sobre
 Ship of Harkinian. Este paquete NO contiene nada del juego original: necesitas tu propia ROM.
 
-PRIMEROS PASOS
+LA PRIMERA VEZ
 1. Descomprime esta carpeta en un sitio normal (por ejemplo C:\Juegos\ZMP), no dentro de Archivos de programa.
 2. Abre soh.exe. Si Windows dice "Windows protegio su PC": Mas informacion > Ejecutar de todas formas.
-3. Solo la primera vez: "No O2R files found. Generate one now?" > Yes > elige tu ROM (.z64/.n64/.v64).
+3. "No O2R files found. Generate one now?" > Yes > elige tu ROM (.z64/.n64/.v64).
    Espera uno o dos minutos. "Extract another?" > No.
    TODOS LOS DE UNA SALA DEBEN USAR LA MISMA VERSION DE ROM y este mismo zip.
-4. En la ventana "Sala ZMP" (si no se ve: Esc > Network > ZMP > "Mostrar u ocultar ventana de sala") escribe:
-     Servidor (host) = la direccion del servidor que te dio el anfitrion
-     Puerto          = 47100
-     Sala            = el nombre de la sala (el mismo para todos)
-     Nombre          = tu nombre (distinto para cada jugador)
-   Quien crea la sala carga antes una partida y despues pulsa "Conectar"; los demas pulsan "Conectar" desde la
-   pantalla de seleccion de partida.
-5. A jugar. Para levantar a un companero caido, ponte a su lado y manten A 3 segundos.
+4. Se abre la ventana "Sala ZMP" (si no se ve: Esc > Network > ZMP > "Mostrar u ocultar ventana de sala").
+   Pestanas: Unirse / Alojar / Perfil / Avanzado. Pestana Perfil: escribe tu nombre > Cambiar nombre.
 
-ANFITRION: alguien ejecuta el pequeno servidor de salas (zmp-server, en la misma release), en su PC, en un VPS o
-por Tailscale/ZeroTier. Guias, modo navegador y solucion de problemas:
+EL ANFITRION (uno del grupo)
+1. Pestana Alojar > Quien puede entrar: "Mi red local y quien tenga el codigo" > Alojar y jugar.
+   (Sala y contrasena vacias = se las inventa el juego. Si el Firewall de Windows pregunta por zmp-server:
+   Permitir acceso.)
+2. Pulsa "Copiar codigo" y pasa el codigo (ZMP-....) a tus amigos. Quien lo tenga puede entrar: pasalo en privado.
+3. Carga tu partida (o empieza una nueva). Esa pasa a ser la partida del grupo.
+4. La linea "Desde internet" dice si los amigos de internet pueden llegar. Si dice CGNAT, "Router sin UPnP" o que
+   el router no abrio el puerto, mira el "plan B" en las guias (enlace abajo).
+   Dejar de alojar (o cerrar el juego) para el servidor y quita la regla del router.
+
+LOS AMIGOS
+1. Quedate en la pantalla de seleccion de partida (no cargues ninguna).
+2. Pestana Unirse > pega el codigo > "Unirse con este codigo". En pocos segundos apareces junto al grupo.
+   En la misma casa? La partida aparece tambien en "En tu red local": escribe la contrasena de la sala en la
+   casilla Contrasena y pulsa Entrar en esa fila.
+
+JUGANDO: para levantar a un companero caido, ponte a su lado y manten A 3 segundos.
+
+PRIVACIDAD: no se sube nada. El juego solo se conecta al servidor que escribes o al que lleva el codigo, y para
+abrir el puerto solo habla con tu propio router. La carpeta "logs" (y zmp-host\zmp-server.log cuando alojas)
+se queda en tu PC.
+
+Guias (plan B para alojar, modo navegador, solucion de problemas):
   https://github.com/S-BlackDragon/zmp-oot64/tree/zmp/docs-zmp/es
 
 Si algo falla: envia la carpeta "logs" de esta carpeta con lo que paso y la hora.

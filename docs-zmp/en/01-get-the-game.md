@@ -11,15 +11,20 @@ share a room (they are different builds), but one server can hold desktop rooms 
 
 ## Option A: download a release (easiest)
 
-1. Open the repository's [latest release](https://github.com/S-BlackDragon/zmp-oot64/releases/latest) on GitHub and download, from the same release:
-   - `ZMP-<version>-windows.zip`: the desktop game;
-   - `zmp-server-<version>-windows-amd64.exe` (or the Linux build): the room server, only for whoever hosts;
-   - `ZMP-<version>-web.zip`: the browser version, only if you want the [browser mode](07-browser-mode.md).
+1. Open the repository's [latest release](https://github.com/S-BlackDragon/zmp-oot64/releases/latest) on GitHub and download:
+   - `ZMP-<version>-windows.zip`: the desktop game. It already includes the room server (`zmp-server.exe`, used by
+     the **Host and play** button) and `zmp-invite.exe` (makes invite codes by hand); that is all a group needs;
+   - `ZMP-<version>-web.zip`: the browser version, only if you want the [browser mode](07-browser-mode.md);
+   - `zmp-server-<version>-...` and `zmp-invite-<version>-...` (Windows, Linux x64, Linux ARM64): the server and the
+     code tool on their own, only for a [PC that only hosts](04-host-on-your-pc.md), a [VPS](06-host-on-a-vps.md)
+     or a [relay](11-relay.md);
+   - the `.sha256.txt` files: checksums, to check a download if you want to.
 2. Unzip `ZMP-<version>-windows.zip` into a new, normal folder (for example `C:\Games\ZMP`). Do not run it from
    inside the zip, and avoid `Program Files` (the game writes its files next to `soh.exe`).
 3. Open `soh.exe`. If Windows shows "Windows protected your PC", click **More info**, then **Run anyway** (the
    program is not signed).
 4. The first time it asks for your ROM: see [Your ROM](02-your-rom.md).
+5. Then [press Host game and send the code to your friend](00-host-and-send-the-code.md).
 
 The release contains no part of the original game: no ROM, no graphics, no sounds, no text from it.
 
@@ -32,6 +37,7 @@ with need **your** build (send them your zip), because a build you make is not b
 ## Updating
 
 When a new release comes out, everyone in the group updates together (the game refuses mismatched builds). To keep
-your settings and saves, copy the new files over the old folder; or start in a new folder and copy `Save\` and
-`shipofharkinian.json` across. The shared progress of a room lives on the server, so it is not lost when you update
-the game, as long as the new version can still open it (the release notes will say if it cannot).
+your settings and saves, copy the new files over the old folder; or start in a new folder and copy `Save\`,
+`shipofharkinian.json` and, if you host from the game, `zmp-host\` across. The shared progress of a room lives on the
+server (for the **Host and play** button, in that `zmp-host` folder), so it is not lost when you update the game, as
+long as the new version can still open it (the release notes will say if it cannot).

@@ -9,7 +9,7 @@ Everything needed is in this repository:
 | root (`soh/`, `libultraship/`, `torch/`, `CMakeLists.txt`...) | the game: Ship of Harkinian with ZMP (`soh/soh/Zmp/`), libultraship and torch as plain folders | CMake + Visual Studio (Windows), Emscripten (browser) |
 | `server/` | `zmp-server`, the room server | Go |
 | `web/` | `make_web.py`: turns the browser build into a folder you can serve | Python 3 |
-| `tools/` | `package_windows.py` (player zip), `build_server.py` (server binaries), `check_release.py` (no ROM data in a release) | Python 3 |
+| `tools/` | `package_windows.py` (player zip), `build_server.py` (server and invite tool binaries), `make_icon_syso.py` (the server's Windows icon), `check_release.py` (no ROM data in a release) | Python 3 |
 
 No ROM and no game data are needed to build; they are only needed to play.
 
@@ -43,10 +43,11 @@ Package it like a release (no ROM data can end up in it: the script checks):
 
 ```powershell
 cd build\win; cpack -G ZIP -C Release; cd ..\..
-python tools\package_windows.py --build (Get-ChildItem _packages\*.zip | Select-Object -First 1).FullName --version 0.6.2
+python tools\package_windows.py --build (Get-ChildItem _packages\*.zip | Select-Object -First 1).FullName --version 0.7.0
 ```
 
-The result is `dist\ZMP-0.6.2-windows.zip`. Every player of a room needs the same `soh.exe`, so give your friends
+With `--server ...` it also puts `zmp-server.exe` and `zmp-invite.exe` in the zip ([release.md](release.md)). The
+result is `dist\ZMP-0.7.0-windows.zip`. Every player of a room needs the same `soh.exe`, so give your friends
 this zip rather than letting each one build their own.
 
 ## Browser game
@@ -77,15 +78,17 @@ Requirements: Go 1.26 or newer.
 cd server
 go test ./...
 go build -o zmp-server.exe ./cmd/zmp-server
+go build -o zmp-invite.exe ./cmd/zmp-invite
 ```
 
-All release binaries (Windows, Linux x64, Linux ARM64, static, no dependencies) at once:
+Put both next to `soh.exe` for the game's **Host and play** button. All release binaries (Windows, Linux x64, Linux
+ARM64, static, no dependencies) at once:
 
 ```powershell
-python tools\build_server.py --version 0.6.2
+python tools\build_server.py --version 0.7.0
 ```
 
-They are written to `dist\`. The Docker image builds from source: see [Host on a VPS](06-host-on-a-vps.md).
+They are written to `dist\`. The Docker image builds from source: see [VPS with Docker](06-host-on-a-vps.md).
 
 ## Linux and macOS
 

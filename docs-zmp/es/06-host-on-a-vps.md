@@ -1,99 +1,101 @@
-# 6. Hospedar en un VPS con Docker (siempre encendido)
+# 6. Plan B: un VPS con Docker (siempre encendido)
 
 [English](../en/06-host-on-a-vps.md) | **Español**
 
-Un pequeño servidor Linux alquilado (un VPS) mantiene el servidor de salas encendido todo el tiempo, así que el grupo
-puede jugar sin que el PC de nadie haga de anfitrión. `zmp-server` necesita muy poco: basta el VPS más pequeño de
-cualquier proveedor (nunca ejecuta el juego). Elige uno en la misma región que tu grupo.
+Un pequeño servidor Linux de alquiler (un VPS) mantiene el servidor de salas encendido todo el tiempo, así que el grupo
+puede jugar sin que el PC de nadie aloje, y se llega desde cualquier sitio (sin router ni problemas de CGNAT).
+`zmp-server` necesita muy poco: basta con el VPS más pequeño de cualquier proveedor (nunca ejecuta el juego). Elige uno
+en la misma región que tu grupo.
 
 ## 1. Preparar el VPS
 
-Necesitas un VPS Linux (Debian o Ubuntu son lo más fácil) con Docker. En un VPS Debian/Ubuntu recién creado, con la
-sesión iniciada por SSH:
+Necesitas un VPS con Linux (Debian o Ubuntu son los más fáciles) y Docker. En un VPS Debian/Ubuntu recién creado, con
+la sesión abierta por SSH:
 
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER     # then log out and back in
+sudo usermod -aG docker $USER     # luego cierra la sesión y vuelve a entrar
 ```
 
-Abre el **puerto TCP 47100** en el cortafuegos del proveedor (la página de "grupo de seguridad" o "firewall" del VPS)
-y, si el VPS tiene su propio cortafuegos (`ufw`), también ahí: `sudo ufw allow 47100/tcp`.
+Abre el **puerto TCP 47100** en el cortafuegos del proveedor (la página "security group" o "firewall" del VPS) y, si
+el VPS tiene su propio cortafuegos (`ufw`), también ahí: `sudo ufw allow 47100/tcp`.
 
-## 2. Obtener los archivos del servidor
+## 2. Arrancar el servidor
 
 ```bash
 git clone -b zmp --depth 1 https://github.com/S-BlackDragon/zmp-oot64.git
 cd zmp-oot64/server/deploy
-mkdir -p data && sudo chown 1000:1000 data    # the container writes the saves as user 1000
-docker compose up -d --build                  # builds the image from source (about a minute) and starts it
-docker compose logs -f zmp-server             # Ctrl+C to stop watching; the server keeps running
+mkdir -p data && sudo chown 1000:1000 data    # el contenedor escribe las partidas como el usuario 1000
+docker compose up -d --build                  # compila la imagen desde el código (cerca de un minuto) y la arranca
+docker compose logs -f zmp-server             # Ctrl+C para dejar de mirar; el servidor sigue en marcha
 ```
 
-Deberías ver `listening on [::]:47100 (tcp and websocket)`. Compruébalo desde tu propio PC: abre
-`http://<dirección del VPS>:47100/healthz` en un navegador; responde `zmp-server <version> protocol 4`.
+Deberías ver `listening on [::]:47100 (tcp and websocket)`. Compruébalo desde tu PC: abre
+`http://<dirección del VPS>:47100/healthz` en un navegador; responde `zmp-server <version> protocol 5`.
 
-Los amigos escriben la dirección del VPS (su IP o un nombre de dominio que apunte a él), el puerto `47100` y el
-nombre de la sala.
+El contenedor está cerrado a cal y canto: se ejecuta como usuario normal, su sistema de archivos es de solo lectura
+salvo `data/`, no tiene privilegios extra y está limitado a 512 MB de memoria y una CPU. Se vuelve a arrancar solo si
+el VPS se reinicia.
 
-El contenedor está blindado: se ejecuta como un usuario normal, su sistema de archivos es de solo lectura salvo
-`data/`, no tiene privilegios adicionales y está limitado a 512 MB de memoria y una CPU. Se reinicia solo si el VPS se
-reinicia.
+## 3. Salas, contraseñas y el código de invitación
 
-Comandos útiles (desde `zmp-oot64/server/deploy`):
+Es un servidor simple: vale cualquier nombre de sala, y **el primer jugador que entra en una sala con contraseña la
+fija**. Así que quien organiza el grupo:
 
-```bash
-docker compose ps                   # is it running?
-docker compose logs --tail 100      # recent log
-docker compose restart              # restart (players reconnect by themselves)
-docker compose down                 # stop
-git pull && docker compose up -d --build   # update to the latest version
+1. en el juego, **Unirse > Por direccion**: **Servidor** = la dirección del VPS (su IP o un dominio que apunte a él),
+   **Sala** = un nombre difícil de adivinar, **Contrasena** = una contraseña; **Conectar**;
+2. da a los amigos esas mismas tres cosas, o un **código de invitación** hecho con `zmp-invite` (va en el zip de
+   Windows, y en la versión publicada para Linux):
+
+```
+zmp-invite encode -addr 203.0.113.10 -room bosque-k3f9 -password inventate-una
 ```
 
-Las partidas compartidas de las salas están en `server/deploy/data/`; haz una copia de seguridad de esa carpeta si te
-importan.
+Muestra el código (`ZMP-...`) y el enlace `zmp://`. Añade `-port <puerto>` si el servidor no está en el 47100, o usa
+`-hint "..."` en vez de `-password` para poner en el código solo una pista. `zmp-invite decode <código>` muestra qué
+lleva un código.
 
-## 3. Sin Docker
-
-Copia `zmp-server-<version>-linux-amd64` (o `-linux-arm64`) desde una versión publicada al VPS y ejecútalo con
-`./zmp-server-<version>-linux-amd64 -listen :47100 -data ./data`. Para mantenerlo en marcha después de cerrar sesión, usa una
-unidad de systemd, `tmux` o `screen`.
-
-## 4. Modo navegador en el VPS
-
-Para que los amigos jueguen en el navegador, pon la versión para navegador (de `ZMP-<version>-web.zip`, o compilada por
-ti) en `server/deploy/web/` y descomenta las dos líneas marcadas de `server/deploy/docker-compose.yml` (el volumen
-`./web:/web:ro` y el `command` con `-web /web`); después, `docker compose up -d`. Los amigos abren
-`http://<dirección del VPS>:47100/`.
-
-Esa página es `http` simple. Funciona, pero algunos navegadores avisan de ello, y una página abierta por `https` solo
-puede conectarse con `wss://`. Para tener una dirección `https://` limpia, pon delante un proxy inverso con TLS, por
-ejemplo [Caddy](https://caddyserver.com/) con un nombre de dominio que apunte al VPS. Añade este servicio al mismo
-`docker-compose.yml`:
+Los ajustes del servidor van en la parte `environment:` del servicio `zmp-server` de
+`server/deploy/docker-compose.yml` (todos están en la
+[tabla de opciones](04-host-on-your-pc.md#4-linux-una-raspberry-pi-o-sin-página)), por ejemplo:
 
 ```yaml
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./caddy-data:/data
+    environment:
+      ZMP_SERVER_NAME: "Nuestro servidor"
+      ZMP_REQUIRE_ROOM_PASSWORD: "true"     # ninguna sala sin contraseña
 ```
 
-y crea `server/deploy/Caddyfile` con tu dominio:
+y luego `docker compose up -d`. Para que también desconocidos puedan crear salas (un relé público), consulta
+[Relé](11-relay.md).
 
+## 4. Órdenes útiles
+
+Desde `zmp-oot64/server/deploy`:
+
+```bash
+docker compose ps                   # ¿está en marcha?
+docker compose logs --tail 100      # registro reciente
+docker compose restart              # reiniciar (los jugadores se reconectan solos)
+docker compose down                 # parar
+git pull && docker compose up -d --build   # actualizar a la última versión
 ```
-play.example.org {
-    reverse_proxy zmp-server:47100
-}
-```
 
-Abre los puertos 80 y 443 en el cortafuegos y después `docker compose up -d`. Caddy obtiene un certificado gratuito por
-sí solo. Los jugadores de navegador abren `https://play.example.org/`; la página rellena `wss://play.example.org/` como
-servidor. Los jugadores de escritorio siguen usando directamente la dirección y el puerto `47100` (el juego de
-escritorio habla TCP simple, que no pasa por el proxy).
+Las partidas compartidas de las salas y sus claves están en `server/deploy/data/`; haz copia de esa carpeta si te
+importan.
 
-La configuración de Caddy de arriba es un ejemplo estándar que el proyecto no ha probado de extremo a extremo; la
-configuración con `http` simple (`-web` en el puerto 47100) es la que cubren las pruebas del servidor.
+## 5. Sin Docker
+
+Copia `zmp-server-<version>-linux-amd64` (o `-linux-arm64`) de una versión publicada al VPS y ejecútalo con
+`./zmp-server-<version>-linux-amd64 -listen :47100 -data ./data`. Para que siga en marcha al cerrar la sesión, usa una
+unidad de systemd, `tmux` o `screen`.
+
+## 6. Jugadores de navegador en el VPS
+
+Para servir la versión para navegador desde el VPS, pon la compilación para navegador (de `ZMP-<version>-web.zip`, o
+compilada por ti) en `server/deploy/web/` y quita el comentario de las dos líneas marcadas en
+`server/deploy/docker-compose.yml` (el volumen `./web:/web:ro` y el `command` con `-web /web`); luego
+`docker compose up -d`. Los amigos abren `http://<dirección del VPS>:47100/`.
+
+Esa página es `http` normal. Funciona, pero algunos navegadores avisan, y una página abierta por `https` solo puede
+conectarse con `wss://`. Para una dirección `https://` limpia, pon un proxy TLS delante: consulta
+[wss:// para navegadores](12-wss-for-browsers.md).

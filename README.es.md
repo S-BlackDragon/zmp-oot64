@@ -25,8 +25,9 @@ ZMP es multijugador **lockstep** (en paso sincronizado). El PC de cada jugador e
 reciben exactamente las mismas entradas en el mismo orden, así que todos calculan el mismo mundo. En medio hay un
 pequeño **servidor de retransmisión**, `zmp-server`, que ordena los botones de todos, los reenvía y guarda la partida
 compartida de cada sala. No ejecuta el juego, así que es diminuto (un programa de 7 MB, con muy poca CPU y memoria).
-**Uno de los jugadores puede ejecutarlo en su propio PC**, o en un VPS barato, o sobre una LAN virtual como Tailscale o
-ZeroTier. No hay un servidor central de ZMP, ni cuentas, ni registro: cada grupo usa su propio servidor.
+**El juego lo arranca por ti** cuando pulsas **Alojar y jugar**; también puede funcionar solo en un PC libre, en un VPS
+barato, como relé o sobre una LAN virtual como Tailscale o ZeroTier. No hay un servidor central de ZMP, ni cuentas, ni
+registro: cada grupo usa su propio servidor.
 
 Consecuencias que debes conocer:
 
@@ -40,24 +41,35 @@ Consecuencias que debes conocer:
 1. **Descarga** `ZMP-<version>-windows.zip` desde [Releases](../../releases/latest) y descomprímelo en una carpeta normal.
 2. **Abre `soh.exe`** y, la primera vez, elige tu ROM de Ocarina of Time (`.z64`/`.n64`/`.v64`); el juego construye
    sus datos a partir de ella en uno o dos minutos. [Detalles](docs-zmp/es/02-your-rom.md)
-3. **Alguien hospeda**: ejecuta `zmp-server` de la misma versión (doble clic en Windows). [Guías para hospedar](#hospedar-una-partida)
-4. **Conecta**: en la ventana "Sala ZMP", escribe la dirección del servidor, el puerto `47100`, el nombre de una sala
-   y tu nombre. El creador de la sala carga una partida guardada y pulsa "Conectar"; los demás lo pulsan desde la
-   pantalla de selección de archivo. [Cómo jugar](docs-zmp/es/03-play.md)
+3. **Alguien aloja**: en la ventana "Sala ZMP", pestaña **Alojar**, pulsa **Alojar y jugar**, luego **Copiar
+   codigo**, pasa el código de invitación a los amigos y carga una partida. [Guía para alojar](#alojar-una-partida)
+4. **Los amigos entran**: pestaña **Unirse**, pegan el código y pulsan **Unirse con este codigo** (en la misma red de
+   casa, la partida también aparece en la lista "En tu red local"). [Cómo jugar](docs-zmp/es/03-play.md)
 5. **Juega**: quédate cerca o sepárate. A un amigo caído se le reanima manteniendo A a su lado durante 3 segundos.
 
-## Hospedar una partida
+## Alojar una partida
 
-- [En tu propio PC](docs-zmp/es/04-host-on-your-pc.md), abriendo el puerto 47100 en tu router.
-- [Con Tailscale o ZeroTier](docs-zmp/es/05-host-with-a-virtual-lan.md): sin cambios en el router, funciona detrás de CGNAT.
-- [En un VPS con Docker](docs-zmp/es/06-host-on-a-vps.md): siempre encendido (`docker compose up -d --build`).
+**[Pulsa Alojar partida y pásale el código a tu amigo](docs-zmp/es/00-host-and-send-the-code.md).** El juego arranca
+su propio servidor, pide a tu router que abra el puerto (UPnP, NAT-PMP o PCP) y muestra un código de invitación
+(`ZMP-...`) y un enlace `zmp://` para pasar. Una línea "Desde internet" dice con honestidad si los amigos de internet
+pueden llegar. Las salas tienen contraseña (se la inventa el juego), y nunca viaja en claro.
+
+Si no llegan (CGNAT, un router sin UPnP), plan B:
+
+- [Un PC que solo aloja](docs-zmp/es/04-host-on-your-pc.md): `zmp-server.exe` con doble clic, con su propia página.
+- [Abrir el puerto a mano](docs-zmp/es/09-open-the-port-by-hand.md) en tu router.
+- [Tailscale o ZeroTier](docs-zmp/es/05-host-with-a-virtual-lan.md): sin cambios en el router, funciona detrás de CGNAT.
+- [Un relé](docs-zmp/es/11-relay.md): cualquier `zmp-server` en internet arrancado con `-relay`.
+- [Un VPS con Docker](docs-zmp/es/06-host-on-a-vps.md): siempre encendido (`docker compose up -d --build`).
+- [wss:// para navegadores](docs-zmp/es/12-wss-for-browsers.md) en páginas `https`.
 
 ## Modo navegador
 
-El mismo juego compilado a WebAssembly: juega en Chrome, Edge o Firefox sin instalar nada. El anfitrión inicia el
-servidor con la versión para navegador (`zmp-server -web <carpeta>`), los amigos abren `http://<host>:47100/`, escriben
-una sala y un nombre, y eligen su ROM desde su propio ordenador; se convierte en la memoria de la pestaña y nunca se
-sube ni se guarda.
+El mismo juego compilado a WebAssembly: juega en Chrome, Edge o Firefox sin instalar nada. Un navegador no puede
+alojar: alguien arranca un servidor con la versión para navegador (`zmp-server -web <carpeta>`), los amigos abren
+`http://<host>:47100/`, escriben una sala y un nombre (o abren la página con un código de invitación) y eligen su ROM
+desde su propio ordenador; se convierte en la memoria de la pestaña y nunca se sube ni se guarda. Un sitio puede dejar
+puesto su servidor con un `zmp-config.json`.
 [Guía del modo navegador](docs-zmp/es/07-browser-mode.md)
 
 ## Estado
@@ -75,7 +87,8 @@ significa seis instancias del juego en una sala):
 
 En curso: una partida completa con seis jugadores por internet y una sesión larga en el navegador.
 
-Límites conocidos: las ventanas y los mensajes propios de ZMP dentro del juego están en español; el juego de escritorio
+Límites conocidos: las pantallas de multijugador de ZMP están en español y en inglés (siguen el idioma del sistema),
+pero algunas líneas de estado y del chat siguen solo en español; el juego de escritorio
 solo funciona en Windows; hasta 6 jugadores por sala; los jugadores de escritorio y los de navegador no pueden compartir
 sala; no hay chat de texto; los paquetes de texturas y de modelos no funcionan en multijugador; una sola Navi por sala
 (la de quien crea la sala).
@@ -91,7 +104,7 @@ dentro. Junto a él:
 | [`server/`](server/) | `zmp-server`, el servidor de salas/retransmisión (Go): TCP para el juego de escritorio y WebSocket para el navegador en un solo puerto, y opcionalmente los archivos de la página del navegador. Dockerfile y archivo de compose en `server/deploy/`. |
 | [`web/`](web/) | `make_web.py`: empaqueta la compilación del navegador en una carpeta lista para servir. |
 | [`tools/`](tools/) | Empaquetado (`package_windows.py`), binarios del servidor (`build_server.py`), la comprobación de que una versión no lleva datos de la ROM (`check_release.py`) y las guías que van dentro del zip. |
-| [`docs-zmp/`](docs-zmp/) | Las guías de ZMP en [inglés](docs-zmp/en/README.md) y [español](docs-zmp/es/README.md): conseguir el juego, tu ROM, jugar, hospedar (PC, LAN virtual, VPS), modo navegador, solución de problemas, compilar, publicar. (`docs/` es de Ship of Harkinian.) |
+| [`docs-zmp/`](docs-zmp/) | Las guías de ZMP en [inglés](docs-zmp/en/README.md) y [español](docs-zmp/es/README.md): conseguir el juego, tu ROM, alojar y pasar el código, jugar, plan B para alojar (servidor con doble clic, router, LAN virtual, relé, VPS, wss), modo navegador, la versión web en tu sitio, solución de problemas, compilar, publicar. (`docs/` es de Ship of Harkinian.) |
 
 ## Compilación
 
