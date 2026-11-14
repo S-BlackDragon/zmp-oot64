@@ -24,4 +24,7 @@ Tailscale/ZeroTier. Guides, browser mode and troubleshooting:
   https://github.com/S-BlackDragon/zmp-oot64/tree/zmp/docs-zmp/en
 
 Problems: send the "logs" folder of this folder with a description and the time it happened.
+LOGS: only if the server you connect to says it collects logs (its owner turned it on), the game also sends it
+its own logs (never your ROM or saves). Untick "Enviar mis registros..." in the Sala ZMP window to never send them.
+Details: docs-zmp/en/09-player-logs.md in the repository.
 ZMP's code is MIT licensed; Ship of Harkinian keeps its own terms (see LICENSING.md in the repository).

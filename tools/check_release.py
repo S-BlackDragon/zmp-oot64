@@ -2,7 +2,7 @@
 never be distributed. Exit code 0 = clean, 1 = something was found (each finding is printed).
 
     python tools/check_release.py dist/web
-    python tools/check_release.py dist/ZMP-0.6.0-windows.zip
+    python tools/check_release.py dist/ZMP-0.6.1-windows.zip
 
 What it looks for:
   - ROM files by extension (.z64 .n64 .v64 .rom .ndd) and by content: the first four bytes of an N64 ROM in any of

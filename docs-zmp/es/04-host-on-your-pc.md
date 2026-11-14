@@ -12,7 +12,7 @@ suele ser más fácil.
 1. Pon `zmp-server-<version>-windows-amd64.exe` en una carpeta propia, por ejemplo `C:\Games\ZMP-server`, y
    renómbralo `zmp-server.exe` si quieres.
 2. Haz doble clic. Se abre una ventana de consola y muestra una línea como
-   `zmp-server 0.6.0 protocol 4 listening on [::]:47100 (tcp and websocket)`. Mantén esa ventana abierta mientras
+   `zmp-server 0.6.1 protocol 4 listening on [::]:47100 (tcp and websocket)`. Mantén esa ventana abierta mientras
    juegas; si la cierras, el servidor se detiene.
 3. La primera vez, el **Firewall de Windows** te pregunta si permitirlo: permítelo en **redes privadas** (y en redes
    públicas solo si tu red doméstica está marcada como pública).
@@ -63,7 +63,9 @@ Si no funciona:
   puede entrar en esa sala**. Usa un nombre de sala que no sea fácil de adivinar y dáselo solo a las personas con las
   que juegas.
 - Solo se abre el puerto `47100`, y solo `zmp-server` escucha en él. Nunca ejecuta el juego, nunca recibe de los
-  jugadores otros archivos que no sean el estado del juego y nunca guarda nada fuera de su carpeta `data`.
+  jugadores otros archivos que no sean el estado del juego y nunca guarda nada fuera de su carpeta `data`, salvo que
+  actives los [registros de los jugadores](09-player-logs.md) opcionales (`-log-dir`), que guarda entonces en esa
+  carpeta.
 - Cuando termines de jugar, cierra la ventana del servidor y quita la regla de redirección si no vas a hospedar de
   nuevo.
 

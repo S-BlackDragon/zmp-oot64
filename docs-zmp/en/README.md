@@ -18,8 +18,10 @@ And:
 
 7. [Browser mode](07-browser-mode.md): play in Chrome, Edge or Firefox, no install.
 8. [Troubleshooting](08-troubleshooting.md): every error message and what to do.
-9. [Building from source](build.md): Windows, browser and server builds, packaging.
-10. [Making a release](release.md) (for maintainers).
+9. [Player logs on the server](09-player-logs.md): optional, off unless the server turns it on; what is sent and how to
+   opt out.
+10. [Building from source](build.md): Windows, browser and server builds, packaging.
+11. [Making a release](release.md) (for maintainers).
 
 ## How ZMP works, in one paragraph
 

@@ -48,5 +48,8 @@ Open an issue on GitHub with:
 - for browser players, the console text (F12, Console, right click, "Save as...");
 - the server's log (its window, or `docker compose logs`).
 
+If your server collects its players' logs ([Player logs on the server](09-player-logs.md)), its owner already has
+every player's logs of that session in its log folder.
+
 Logs contain player names, the room name and the server address, and file paths that may include your Windows
 user name: read them before you post them publicly.

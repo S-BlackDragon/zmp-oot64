@@ -41,10 +41,10 @@ Package it like a release (no ROM data can end up in it: the script checks):
 
 ```powershell
 cd build\win; cpack -G ZIP -C Release; cd ..\..
-python tools\package_windows.py --build (Get-ChildItem _packages\*.zip | Select-Object -First 1).FullName --version 0.6.0
+python tools\package_windows.py --build (Get-ChildItem _packages\*.zip | Select-Object -First 1).FullName --version 0.6.1
 ```
 
-The result is `dist\ZMP-0.6.0-windows.zip`. Every player of a room needs the same `soh.exe`, so give your friends
+The result is `dist\ZMP-0.6.1-windows.zip`. Every player of a room needs the same `soh.exe`, so give your friends
 this zip rather than letting each one build their own.
 
 ## Browser game
@@ -80,7 +80,7 @@ go build -o zmp-server.exe ./cmd/zmp-server
 All release binaries (Windows, Linux x64, Linux ARM64, static, no dependencies) at once:
 
 ```powershell
-python tools\build_server.py --version 0.6.0
+python tools\build_server.py --version 0.6.1
 ```
 
 They are written to `dist\`. The Docker image builds from source: see [Host on a VPS](06-host-on-a-vps.md).

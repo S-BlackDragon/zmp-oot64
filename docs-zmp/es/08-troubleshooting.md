@@ -48,5 +48,8 @@ Abre una incidencia (issue) en GitHub con:
 - para los jugadores de navegador, el texto de la consola (F12, Console, clic derecho, "Save as...");
 - el registro del servidor (su ventana, o `docker compose logs`).
 
+Si tu servidor recoge los registros de sus jugadores ([Registros de los jugadores en el servidor](09-player-logs.md)),
+quien lo lleva ya tiene los registros de todos los jugadores de esa sesión en su carpeta de registros.
+
 Los registros contienen nombres de jugadores, el nombre de la sala y la dirección del servidor, y rutas de archivos que
 pueden incluir tu nombre de usuario de Windows: léelos antes de publicarlos.
