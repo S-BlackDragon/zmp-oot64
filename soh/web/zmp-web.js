@@ -6,6 +6,13 @@
 // Module.zmp.buildHash is filled here with the SHA-256 of soh.wasm (first 16 hex digits): the identity of this build
 // in the HELLO handshake, as the executable's hash is for the native game (same wasm = same hash).
 
+// The fragment (#invite=, #pw=) carries the room's password: it is kept for the configuration below and wiped
+// from the address bar at once, before the 30 MB game loads (it stayed there for seconds).
+Module.zmpFragment = location.hash;
+if (/^#(.*&)?(invite|pw)=/.test(location.hash) && history.replaceState) {
+    history.replaceState(null, "", location.pathname + location.search);
+}
+
 (function () {
     const params = new URLSearchParams(location.search);
     const cfg = Object.assign({}, Module.zmp || {});
@@ -203,7 +210,7 @@ Module.zmpConfig = (() => {
         take("lang", (v) => ["auto", "es", "en"].includes(v), (v) => (out.lang = v), "auto, es or en");
         take("autojoin", (v) => v === "0" || v === "1", (v) => (out.autojoin = v === "1"), "0 or 1");
         // the fragment: never sent to any server; wiped from the address bar once read
-        const frag = new URLSearchParams(location.hash.replace(/^#/, ""));
+        const frag = new URLSearchParams((Module.zmpFragment || "").replace(/^#/, ""));
         let wipe = false;
         if (frag.has("invite")) {
             wipe = true;
