@@ -41,6 +41,13 @@
 #include "soh/Zmp/Net/SharedGame.h"
 #include "soh/Zmp/Ui/ZmpWindow.h"
 #include "soh/Zmp/Ui/ChatBox.h"
+#include "soh/Zmp/Ui/Multiplayer.h"
+#include "soh/Zmp/Ui/ZmpText.h"
+#include "soh/Zmp/Net/Address.h"
+#include "soh/Zmp/Net/Crypto.h"
+#include "soh/Zmp/Net/Host.h"
+#include "soh/Zmp/Net/Invite.h"
+#include "soh/Zmp/Net/Lan.h"
 #include "soh/Zmp/ZmpCVars.h"
 #include "soh/Zmp/State/StateBlob.h"
 #include "soh/Zmp/State/ResourceSlots.h"
@@ -1142,11 +1149,27 @@ json NetStatusJson() {
     auto st = Zmp::Client::Get().GetStatus();
     json players = json::array();
     for (auto& p : st.players) {
-        players.push_back({ { "id", p.id }, { "name", p.name }, { "slot", p.slot }, { "state", p.state } });
+        players.push_back(
+            { { "id", p.id }, { "name", p.name }, { "slot", p.slot }, { "state", p.state }, { "color", p.color } });
     }
     auto hs = Zmp::Client::Get().GetHandshake();
+    json args = json::object();
+    for (auto& [k, v] : st.args) {
+        args[k] = v;
+    }
     return { { "ok", true },
              { "state", Zmp::Client::StateName(st.state) },
+             // (D-259..D-262: the address in use, the protocol, what the player reads)
+             { "via", st.via },
+             { "transport", st.transport },
+             { "proto", st.proto },
+             { "args", args },
+             { "room_password", st.roomPassword },
+             { "room_owner", st.roomOwner },
+             { "server_name", st.serverName },
+             { "rename_result", st.renameResult },
+             { "rename_seq", st.renameSeq },
+             { "message", Zmp::Ui::StatusText(st) },
              { "host", st.host },
              { "port", st.port },
              { "room", st.room },
@@ -2199,6 +2222,140 @@ void Dispatch(const RequestPtr& req) {
     } else if (name == "net.disconnect") {
         Zmp::Client::Get().Disconnect();
         req->Reply({ { "ok", true } });
+    } else if (name == "zmp.address") {
+        // D-259: the address grammar shared by the desktop and the web (tools/harness/data/address_cases.json)
+        Zmp::Address a = Zmp::ParseAddress(cmd.value("text", std::string()), (uint16_t)cmd.value("port", 47100));
+        req->Reply({ { "ok", true },
+                     { "valid", a.ok },
+                     { "error", a.error },
+                     { "kind", Zmp::Address::KindName(a.kind) },
+                     { "host", a.host },
+                     { "port", a.port },
+                     { "path", a.path },
+                     { "bare_domain", a.bareDomain },
+                     { "url", a.ok ? a.Url() : std::string() },
+                     { "text_form", a.ok ? a.Text() : std::string() } });
+    } else if (name == "zmp.invite_parse") {
+        Zmp::Invite::Code c;
+        std::string err;
+        bool ok = Zmp::Invite::Parse(cmd.value("text", std::string()), c, err);
+        req->Reply({ { "ok", true },
+                     { "valid", ok },
+                     { "error", err },
+                     { "addresses", c.addresses },
+                     { "port", c.port },
+                     { "room", c.room },
+                     { "password", c.password },
+                     { "hint", c.hint },
+                     { "message", ok ? std::string() : Zmp::Text::InviteError(err) } });
+    } else if (name == "zmp.invite_format") {
+        Zmp::Invite::Code c;
+        c.addresses = cmd.value("addresses", std::vector<std::string>());
+        c.port = cmd.value("port", 47100);
+        c.room = cmd.value("room", std::string());
+        c.password = cmd.value("password", std::string());
+        c.hint = cmd.value("hint", std::string());
+        std::string text, link, err;
+        bool ok = Zmp::Invite::Format(c, text, link, err);
+        req->Reply({ { "ok", ok }, { "text", text }, { "link", link }, { "error", err } });
+    } else if (name == "zmp.crypto") {
+        // docs/PROTOCOLO_5.md 3: the keys and proofs, against server/internal/roomauth/testdata/vectors.json
+        namespace C = Zmp::Crypto;
+        std::string op = cmd.value("op", std::string());
+        C::Bytes ns, nc;
+        C::FromHex(cmd.value("ns", std::string()), ns);
+        C::FromHex(cmd.value("nc", std::string()), nc);
+        std::string out;
+        if (op == "sha256") {
+            out = C::Hex(C::Sha256(C::ToBytes(cmd.value("data", std::string()))));
+        } else if (op == "room_key") {
+            out = C::Hex(C::RoomKey(cmd.value("room", std::string()), cmd.value("password", std::string())));
+        } else if (op == "server_key") {
+            out = C::Hex(C::ServerKey(cmd.value("password", std::string())));
+        } else if (op == "proof" || op == "confirm") {
+            C::Bytes k;
+            C::FromHex(cmd.value("key", std::string()), k);
+            C::Digest key{};
+            std::copy(k.begin(), k.begin() + std::min<size_t>(k.size(), 32), key.begin());
+            std::string kind = cmd.value("kind", std::string("room"));
+            out = op == "confirm" ? C::Hex(C::Confirm(key, kind, ns, nc))
+                                  : C::Hex(C::Proof(key, kind, ns, nc, cmd.value("room", std::string()),
+                                                    cmd.value("name", std::string())));
+        } else if (op == "room_proof" || op == "server_proof" || op == "room_confirm") {
+            C::Digest key = op == "server_proof"
+                                ? C::ServerKey(cmd.value("password", std::string()))
+                                : C::RoomKey(cmd.value("room", std::string()), cmd.value("password", std::string()));
+            out = op == "room_confirm"
+                      ? C::Hex(C::Confirm(key, "room", ns, nc))
+                      : C::Hex(C::Proof(key, op == "room_proof" ? "room" : "server", ns, nc,
+                                        cmd.value("room", std::string()), cmd.value("name", std::string())));
+        }
+        req->Reply({ { "ok", !out.empty() }, { "hex", out } });
+    } else if (name == "zmp.join_code") {
+        std::string msg;
+        bool ok = Zmp::Ui::JoinWithCode(cmd.value("code", std::string()), cmd.value("password", std::string()), &msg);
+        req->Reply({ { "ok", true }, { "started", ok }, { "message", msg } });
+    } else if (name == "zmp.join_address") {
+        std::string msg;
+        bool ok = Zmp::Ui::JoinAddress(cmd.value("address", std::string()), cmd.value("room", std::string()),
+                                       cmd.value("password", std::string()), &msg);
+        req->Reply({ { "ok", true }, { "started", ok }, { "message", msg } });
+    } else if (name == "zmp.rename") {
+        std::string msg;
+        bool ok = Zmp::Ui::RequestRename(cmd.value("name", std::string()), &msg);
+        req->Reply({ { "ok", true }, { "sent", ok }, { "message", msg } });
+    } else if (name == "zmp.lan_rooms") {
+        req->Reply({ { "ok", true }, { "rooms", Zmp::Ui::LanRoomsText() }, { "listening", Zmp::Lan::Listening() } });
+    } else if (name == "zmp.lan_join") {
+        std::string msg;
+        bool ok = Zmp::Ui::JoinLan((size_t)cmd.value("index", 0), cmd.value("password", std::string()), &msg);
+        req->Reply({ { "ok", true }, { "started", ok }, { "message", msg } });
+    } else if (name == "zmp.host_start") {
+        Zmp::Host::Options o;
+        o.scope = cmd.value("scope", std::string("local"));
+        o.port = cmd.value("port", 47100);
+        o.room = cmd.value("room", std::string());
+        o.password = cmd.value("password", std::string());
+        bool ok = Zmp::Host::Start(o);
+        req->Reply({ { "ok", true }, { "started", ok }, { "error", Zmp::Host::Get().error } });
+    } else if (name == "zmp.host_status") {
+        auto hs = Zmp::Host::Get();
+        req->Reply({ { "ok", true },
+                     { "running", hs.running },
+                     { "ready", hs.ready },
+                     { "error", hs.error },
+                     { "exit_code", hs.exitCode },
+                     { "state", hs.state },
+                     { "server_exe", hs.serverExe } });
+    } else if (name == "zmp.host_stop") {
+        Zmp::Host::Stop();
+        req->Reply({ { "ok", true } });
+    } else if (name == "zmp.ui") {
+        // Opens (or closes) the room window on a tab, for the screenshots of the menus.
+        auto win = Ship::Context::GetRawInstance()->GetWindow()->GetGui()->GetGuiWindow("Sala ZMP");
+        bool open = cmd.value("open", true);
+        if (win != nullptr) {
+            if (open) {
+                win->Show();
+            } else {
+                win->Hide();
+            }
+        }
+        Zmp::Ui::SelectTab(cmd.value("tab", std::string("join")));
+        req->Reply({ { "ok", win != nullptr } });
+    } else if (name == "zmp.text") {
+        std::map<std::string, std::string> args;
+        if (cmd.contains("args") && cmd["args"].is_object()) {
+            for (auto& [k, v] : cmd["args"].items()) {
+                args[k] = v.is_string() ? v.get<std::string>() : v.dump();
+            }
+        }
+        req->Reply({ { "ok", true },
+                     { "language", Zmp::Text::Language() },
+                     { "text", Zmp::Text::Rejection(cmd.value("reason", std::string()), args,
+                                                    cmd.value("detail", std::string())) } });
+    } else if (name == "zmp.recent") {
+        req->Reply({ { "ok", true }, { "recent", Zmp::Ui::RecentList() } });
     } else if (name == "quit") {
         sQuitRequested = true;
         req->Reply({ { "ok", true }, { "tick", sFrame } });

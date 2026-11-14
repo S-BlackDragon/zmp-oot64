@@ -17,6 +17,7 @@
 #include "soh/util.h"
 #include "soh/Zmp/Net/Autosave.h"
 #include "soh/Zmp/Ui/ChatBox.h"
+#include "soh/Zmp/Ui/Multiplayer.h"
 #include <chrono>
 #include "soh/SohGui/UIWidgets.hpp"
 #include "soh/SohGui/SohMenu.h"
@@ -27,22 +28,9 @@ extern std::shared_ptr<SohMenu> mSohMenu;
 
 namespace Zmp {
 
+// (the player's language, the rejections by code: Ui/Multiplayer.cpp)
 static std::string StatusLine(const NetStatus& st) {
-    std::string where = st.host + ":" + std::to_string(st.port);
-    switch (st.state) {
-        case NetState::Connected:
-            return "Conectado a " + where + " (sala " + st.room + ", " + std::to_string(st.players.size()) +
-                   (st.players.size() == 1 ? " jugador)" : " jugadores)");
-        case NetState::Connecting:
-            return "Conectando a " + where + "...";
-        case NetState::Rejected:
-            return "Rechazado por " + where + ": " + (st.detail.empty() ? st.reason : st.detail);
-        case NetState::Error:
-            return st.detail.empty() ? ("Error: " + st.reason) : st.detail;
-        case NetState::Disconnected:
-        default:
-            return "Desconectado";
-    }
+    return Ui::StatusText(st);
 }
 
 static ImVec4 StatusColor(NetState state) {
@@ -345,6 +333,7 @@ void RoomWindow::DrawLockstepOverlay(const Lockstep::Status& ls, float y) {
 }
 
 void RoomWindow::DrawOverlay() {
+    Ui::OnFrame();
     if (!CVarGetInteger(ZMP_CVAR_OVERLAY, 1)) {
         return;
     }
@@ -433,38 +422,10 @@ void RoomWindow::DrawOverlay() {
     dl->AddText(ImGui::GetFont(), bigSize, pos2, color, line.c_str());
 }
 
-void RoomWindow::DrawConnectionForm() {
+// The settings of "Avanzado" (autosave, resume, whom to follow, start the room over, chat box).
+void RoomWindow::DrawAdvancedSettings() {
     NetStatus st = Client::Get().GetStatus();
     bool active = st.state == NetState::Connected || st.state == NetState::Connecting || st.state == NetState::Error;
-
-    std::string host = CVarGetString(ZMP_CVAR_SERVER_HOST, ZMP_DEFAULT_HOST);
-    int port = CVarGetInteger(ZMP_CVAR_SERVER_PORT, ZMP_DEFAULT_PORT);
-    std::string room = CVarGetString(ZMP_CVAR_ROOM, ZMP_DEFAULT_ROOM);
-    std::string name = CVarGetString(ZMP_CVAR_NAME, "Player");
-
-    ImGui::BeginDisabled(active);
-    ImGui::Text("Servidor (host)");
-    if (UIWidgets::InputString("##ZmpHost", &host)) {
-        CVarSetString(ZMP_CVAR_SERVER_HOST, host.c_str());
-        Ship::Context::GetRawInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
-    }
-    ImGui::Text("Puerto");
-    if (ImGui::InputInt("##ZmpPort", &port)) {
-        CVarSetInteger(ZMP_CVAR_SERVER_PORT, port);
-        Ship::Context::GetRawInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
-    }
-    ImGui::Text("Sala");
-    if (UIWidgets::InputString("##ZmpRoom", &room)) {
-        CVarSetString(ZMP_CVAR_ROOM, room.c_str());
-        Ship::Context::GetRawInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
-    }
-    ImGui::Text("Nombre");
-    if (UIWidgets::InputString("##ZmpName", &name)) {
-        CVarSetString(ZMP_CVAR_NAME, name.c_str());
-        Ship::Context::GetRawInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
-    }
-    ImGui::EndDisabled();
-
     // Autosave of the leader and resume of the last session of the room (phase 4, D-054).
     int minutes = CVarGetInteger(ZMP_CVAR_AUTOSAVE_MINUTES, 5);
     ImGui::Text("Autoguardado cada (minutos, 0 = nunca)");
@@ -498,21 +459,13 @@ void RoomWindow::DrawConnectionForm() {
     }
     ImGui::EndDisabled();
 
-    bool valid = !host.empty() && port > 0 && port < 65536 && !room.empty() && !name.empty();
-    if (!active) {
-        ImGui::BeginDisabled(!valid);
-        if (ImGui::Button("Conectar")) {
-            Client::Get().Connect(host, (uint16_t)port, room, name);
-        }
-        ImGui::EndDisabled();
-    } else if (ImGui::Button("Desconectar")) {
-        Client::Get().Disconnect();
-    }
-
     ImGui::Separator();
     Chat::DrawSettings();
-    ImGui::Separator();
-    ImGui::TextColored(StatusColor(st.state), "%s", StatusLine(st).c_str());
+}
+
+// The room's players and the group (while connected).
+void RoomWindow::DrawRoomPlayers() {
+    NetStatus st = Client::Get().GetStatus();
     if (st.state == NetState::Connected) {
         auto ls = Lockstep::GetStatus();
         ImGui::Text("RTT: %d ms | Retraso D: %d ticks | %s", st.rttMs, ls.delay, Lockstep::PhaseName(ls.phase));
@@ -572,6 +525,10 @@ void RoomWindow::DrawConnectionForm() {
     }
 }
 
+void RoomWindow::DrawConnectionForm() {
+    Ui::DrawMultiplayer();
+}
+
 void RoomWindow::DrawElement() {
     DrawConnectionForm();
 }
@@ -581,7 +538,15 @@ void RoomWindow::Draw() {
     if (!IsVisible()) {
         return;
     }
-    ImGui::SetNextWindowSize(ImVec2(320, 360), ImGuiCond_FirstUseEver);
+    // Inside the game's window whenever it opens: with ImGui's viewports a window placed outside it would become a
+    // window of its own on the desktop (and out of the game's captures).
+    {
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowViewport(vp->ID);
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 16, vp->WorkPos.y + 16), ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize(ImVec2(std::min(560.0f, vp->WorkSize.x - 32), std::min(620.0f, vp->WorkSize.y - 32)),
+                                 ImGuiCond_Appearing);
+    }
     bool open = true;
     if (ImGui::Begin("Sala ZMP", &open, ImGuiWindowFlags_NoDocking)) {
         DrawElement();

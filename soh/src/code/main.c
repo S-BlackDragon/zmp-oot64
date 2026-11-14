@@ -46,7 +46,11 @@ void Main_LogSystemHeap(void) {
 #ifdef _WIN32
 int Zmp_InstallNoActivateHook(void); // ZMP: D-063
 void Zmp_InstallBootLog(void);       // ZMP: finding R
+int Zmp_LinkHandOff(void);           // ZMP: a zmp:// link goes to the copy already running
 int SDL_main(int argc, char* argv[]) {
+    if (Zmp_LinkHandOff()) { // ZMP: handed to the running copy: this one ends before opening any window
+        return 0;
+    }
     Zmp_InstallBootLog(); // ZMP: finding R, before anything else
     // ZMP: test instances never take the focus (D-063); they also skip the console window, which flashes and can
     // take the focus before it is hidden.

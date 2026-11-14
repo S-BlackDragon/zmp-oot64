@@ -23,6 +23,8 @@ class RoomWindow : public Ship::GuiWindow {
 
     // Connection form shared by this window and the Network > ZMP menu.
     static void DrawConnectionForm();
+    static void DrawAdvancedSettings();
+    static void DrawRoomPlayers();
     static void DrawOverlay();
     static void DrawLockstepOverlay(const Lockstep::Status& ls, float y);
 };

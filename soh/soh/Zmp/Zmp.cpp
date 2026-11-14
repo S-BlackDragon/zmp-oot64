@@ -39,12 +39,15 @@
 #include "ZmpLog.h"
 #include "Harness/Harness.h"
 #include "Net/ZmpClient.h"
+#include "Net/Host.h"
+#include "Net/Lan.h"
 #include "Net/Lockstep.h"
 #include "Sim/Session.h"
 #include "State/FixedHeap.h"
 #include "State/ResourceSlots.h"
 #include "State/StateBlob.h"
 #include "Ui/ZmpWindow.h"
+#include "Ui/Multiplayer.h"
 
 extern "C" {
 #include <z64.h>
@@ -1037,13 +1040,32 @@ static std::string WebParam(const char* key) {
     return v != nullptr ? std::string(v) : std::string();
 }
 
+// What the site's zmp-config.json and the URL said (zmp-web.js, D-262), for Zmp_Init's join once the game is up.
+static bool sWebAutojoin = false;
+static std::string sWebInvite;
+static std::string sWebPassword;
+
 static void ApplyWebConfig() {
     std::string host = WebParam("host");
     std::string port = WebParam("port");
     std::string room = WebParam("room");
     std::string name = WebParam("name");
+    // (always written, also to their defaults: the browser keeps the config between visits, and a site that stops
+    // fixing its server must not leave it fixed)
+    CVarSetInteger(ZMP_CVAR_WEB_LOCK_SERVER, WebParam("lockServer") == "1" ? 1 : 0);
+    CVarSetInteger(ZMP_CVAR_WEB_LOCK_NAME, WebParam("lockName") == "1" ? 1 : 0);
+    std::string policy = WebParam("passwordPolicy");
+    CVarSetString(ZMP_CVAR_WEB_PASSWORD_POLICY, policy == "none" || policy == "required" ? policy.c_str()
+                                                : policy == "given"                      ? "none"
+                                                                                         : "optional");
+    std::string lang = WebParam("lang");
+    if (lang == "auto" || lang == "es" || lang == "en") {
+        CVarSetString(ZMP_CVAR_LANGUAGE, lang.c_str());
+    }
     if (!host.empty()) {
         CVarSetString(ZMP_CVAR_SERVER_HOST, host.c_str());
+    } else if (CVarGetInteger(ZMP_CVAR_WEB_LOCK_SERVER, 0)) {
+        CVarSetInteger(ZMP_CVAR_WEB_LOCK_SERVER, 0); // (nothing to fix)
     }
     if (!port.empty()) {
         CVarSetInteger(ZMP_CVAR_SERVER_PORT, atoi(port.c_str()));
@@ -1053,8 +1075,13 @@ static void ApplyWebConfig() {
     }
     if (!room.empty()) {
         CVarSetString(ZMP_CVAR_ROOM, room.c_str());
-        CVarSetInteger(ZMP_CVAR_AUTOCONNECT, 1);
+    } else if (WebParam("roomAsk") == "1") {
+        CVarSetString(ZMP_CVAR_ROOM, "");
     }
+    sWebAutojoin = WebParam("autojoin") == "1";
+    sWebInvite = WebParam("invite");
+    sWebPassword = WebParam("password");
+    CVarSetInteger(ZMP_CVAR_AUTOCONNECT, 0); // (the join below replaces the old room-means-connect rule)
 #ifdef ZMP_HARNESS
     // Test builds (D-242): `harness=1` starts the harness; there is no port, the page is the client. A tab has a
     // fresh profile, so the harness tab also gets what the launcher writes into a desktop test instance's config
@@ -1077,7 +1104,9 @@ static void ApplyWebConfig() {
     if (CVarGetInteger("gSettings.InterpolationFPS", -1) == -1) {
         CVarSetInteger("gSettings.InterpolationFPS", 60);
     }
-    Zmp::Log("zmp: web config host=" + host + " port=" + port + " room=" + room + " name=" + name);
+    Zmp::Log("zmp: web config host=" + host + " port=" + port + " room=" + room + " name=" + name + " lockServer=" +
+             WebParam("lockServer") + " passwordPolicy=" + policy + " autojoin=" + (sWebAutojoin ? "1" : "0") +
+             (sWebInvite.empty() ? "" : " (invite code)") + (sWebPassword.empty() ? "" : " (password given)"));
 }
 #endif
 
@@ -1107,6 +1136,24 @@ extern "C" void Zmp_Init(void) {
     }
 #endif
 
+#ifndef __EMSCRIPTEN__
+    Zmp::Ui::StartLinkServer();     // (a link clicked while this copy runs comes here, not to a second copy)
+    Zmp::Ui::JoinFromCommandLine(); // (soh.exe "zmp://join/...": a link clicked in the browser or a chat)
+#endif
+#ifdef __EMSCRIPTEN__
+    if (!sWebInvite.empty()) {
+        std::string msg;
+        if (!Zmp::Ui::JoinWithCode(sWebInvite, sWebPassword, &msg)) {
+            Zmp::Log("zmp: the page's invite code did not join: " + msg);
+        }
+    } else if (sWebAutojoin) {
+        std::string msg;
+        if (!Zmp::Ui::JoinAddress(CVarGetString(ZMP_CVAR_SERVER_HOST, ""), CVarGetString(ZMP_CVAR_ROOM, ""),
+                                  sWebPassword, &msg)) {
+            Zmp::Log("zmp: the site's server was not joined: " + msg);
+        }
+    }
+#endif
     if (CVarGetInteger(ZMP_CVAR_AUTOCONNECT, 0)) {
         Zmp::Client::Get().Connect(CVarGetString(ZMP_CVAR_SERVER_HOST, ZMP_DEFAULT_HOST),
                                    (uint16_t)CVarGetInteger(ZMP_CVAR_SERVER_PORT, ZMP_DEFAULT_PORT),
@@ -1126,6 +1173,8 @@ extern "C" void Zmp_Deinit(void) {
 #ifdef ZMP_HARNESS
     Zmp::Harness::Stop();
 #endif
+    Zmp::Host::Shutdown(); // (the hosted server stops with the game unless asked to keep running, D-260)
+    Zmp::Lan::Shutdown();
     Zmp::Client::Get().Disconnect();
     sRoomWindow = nullptr;
     Zmp::LogClose();

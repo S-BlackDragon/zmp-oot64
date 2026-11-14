@@ -76,6 +76,31 @@
 // The diagnostic lines at the top (connection, tick, delay, hash): off in the demos, on in the test instances.
 #define ZMP_CVAR_DEBUG_OVERLAY CVAR_ZMP("DebugOverlay")
 
-#define ZMP_DEFAULT_HOST "127.0.0.1"
+// Easy hosting and joining (docs/PRODUCTO_PUBLICO.md 3.3, 5, 6; D-259..D-262). Local settings, none in the simulation.
+// PlayerKey: 32 hex characters made on first use (protocol 5 identity). Color: 0xRRGGBB or -1 (the slot's).
+// Language: "auto", "es" or "en". Recent: JSON list of {address, room, t} (newest first, at most 8; never a password).
+#define ZMP_CVAR_PLAYER_KEY CVAR_ZMP("PlayerKey")
+#define ZMP_CVAR_COLOR CVAR_ZMP("Color")
+#define ZMP_CVAR_LANGUAGE CVAR_ZMP("Language")
+#define ZMP_CVAR_RECENT CVAR_ZMP("Recent")
+// LAN list (UDP announce, D-261): the port (default 47100) and, test builds, the address the list listens on and the
+// announce goes to (default: every interface / the LAN's multicast group and broadcast).
+#define ZMP_CVAR_LAN_PORT CVAR_ZMP("Lan.Port")
+#define ZMP_CVAR_LAN_ADDRESS CVAR_ZMP("Lan.Address")
+// "Alojar partida" (D-260): who may enter ("lan", "internet", "local"), the TCP port, the room; the bundled
+// zmp-server.exe next to soh.exe (a test build may point elsewhere), and whether it keeps running when the game closes.
+#define ZMP_CVAR_HOST_SCOPE CVAR_ZMP("Host.Scope")
+#define ZMP_CVAR_HOST_PORT CVAR_ZMP("Host.Port")
+#define ZMP_CVAR_HOST_ROOM CVAR_ZMP("Host.Room")
+#define ZMP_CVAR_HOST_SERVER_EXE CVAR_ZMP("Host.ServerExe")
+#define ZMP_CVAR_HOST_KEEP CVAR_ZMP("Host.KeepRunning")
+// Web (D-262, zmp-config.json and the URL): the hosting site fixed the server / the name; password policy
+// ("none", "optional", "required"); the room is to be asked ("ask") rather than suggested.
+#define ZMP_CVAR_WEB_LOCK_SERVER CVAR_ZMP("Web.LockServer")
+#define ZMP_CVAR_WEB_LOCK_NAME CVAR_ZMP("Web.LockName")
+#define ZMP_CVAR_WEB_PASSWORD_POLICY CVAR_ZMP("Web.PasswordPolicy")
+
+// No server is preset anywhere (public build): the player types one, picks one of the LAN or pastes a code.
+#define ZMP_DEFAULT_HOST ""
 #define ZMP_DEFAULT_PORT 47100
 #define ZMP_DEFAULT_ROOM "zmp"
